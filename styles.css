@@ -1,0 +1,310 @@
+:root {
+    --sidebar: #7fc5d5;
+    --research: #e2ae37;
+    --skills: #79af8b;
+    --projects: #8c84bf;
+    --text: #2e2e2e;
+    --muted: #777;
+    --page: #ffffff;
+    --line: #e6e6e6;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+html {
+    scroll-behavior: smooth;
+}
+
+body {
+    margin: 0;
+    background: var(--page);
+    color: var(--text);
+    font-family: Arial, Helvetica, sans-serif;
+    font-size: 16px;
+    line-height: 1.45;
+}
+
+a {
+    color: inherit;
+    text-decoration: none;
+}
+
+a:hover {
+    text-decoration: underline;
+}
+
+.page {
+    display: grid;
+    min-height: 100vh;
+    grid-template-columns: 220px minmax(0, 1fr);
+}
+
+.sidebar {
+    min-height: 100vh;
+    padding: 30px;
+    background: var(--sidebar);
+    color: #fff;
+}
+
+.name {
+    display: block;
+    margin-bottom: 30px;
+    font-size: 2rem;
+    font-weight: 700;
+    line-height: 1.05;
+}
+
+.portrait {
+    display: block;
+    width: 154px;
+    height: 190px;
+    margin-bottom: 30px;
+    border: 2px solid rgba(255, 255, 255, 0.75);
+    object-fit: cover;
+}
+
+.portrait-placeholder {
+    display: grid;
+    place-items: center;
+    background: rgba(255, 255, 255, 0.22);
+}
+
+.portrait-placeholder span {
+    font-family: Georgia, "Times New Roman", serif;
+    font-size: 5.2rem;
+}
+
+.side-info {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    font-size: 0.88rem;
+    overflow-wrap: anywhere;
+}
+
+.side-info h2 {
+    margin: 0 0 5px;
+    font-size: 0.88rem;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+}
+
+.side-info h2:not(:first-child) {
+    margin-top: 24px;
+}
+
+.side-info a,
+.side-info span {
+    margin: 2px 0;
+}
+
+.main-column {
+    min-width: 0;
+}
+
+.topbar {
+    display: flex;
+    min-height: 86px;
+    align-items: center;
+    padding: 0 32px;
+    border-bottom: 1px solid var(--line);
+}
+
+.topbar nav {
+    display: flex;
+    gap: clamp(28px, 5vw, 58px);
+}
+
+.topbar a {
+    font-size: 1rem;
+    font-weight: 600;
+}
+
+main {
+    max-width: 1050px;
+    padding: 0 32px 24px;
+}
+
+section {
+    scroll-margin-top: 16px;
+}
+
+section h1,
+section h2 {
+    width: min(350px, calc(100% + 32px));
+    margin: 0 0 20px -32px;
+    padding: 6px 30px;
+    color: #fff;
+    font-size: 1.55rem;
+    font-weight: 500;
+    line-height: 1.1;
+}
+
+section h1 {
+    background: var(--sidebar);
+}
+
+#research h2 {
+    background: var(--research);
+}
+
+#skills h2 {
+    background: var(--skills);
+}
+
+#projects h2 {
+    background: var(--projects);
+}
+
+.section-content {
+    padding: 0 0 22px;
+}
+
+.section-content p {
+    margin: 0 0 10px;
+}
+
+.section-content p:last-child {
+    margin-bottom: 0;
+}
+
+.intro {
+    max-width: 850px;
+    font-size: 1.05rem;
+}
+
+.compact-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 34px;
+    margin: 0;
+    padding-left: 20px;
+}
+
+.skill-list p {
+    display: inline;
+}
+
+.skill-list p + p::before {
+    margin: 0 12px;
+    color: #bbb;
+    content: "|";
+}
+
+footer {
+    display: flex;
+    max-width: 1050px;
+    justify-content: space-between;
+    gap: 20px;
+    margin: 0 32px;
+    padding: 18px 0 28px;
+    border-top: 1px solid var(--line);
+    color: var(--muted);
+    font-size: 0.78rem;
+}
+
+@media (min-width: 1100px) {
+    .sidebar {
+        padding-left: 30px;
+    }
+
+    .main-column {
+        max-width: 1200px;
+    }
+}
+
+@media (max-width: 700px) {
+    .page {
+        display: block;
+    }
+
+    .sidebar {
+        display: grid;
+        min-height: auto;
+        grid-template-columns: 90px minmax(0, 1fr);
+        gap: 14px 20px;
+        padding: 24px;
+    }
+
+    .name {
+        grid-column: 1 / -1;
+        margin: 0;
+        font-size: 1.7rem;
+    }
+
+    .portrait {
+        width: 90px;
+        height: 112px;
+        margin: 0;
+    }
+
+    .portrait-placeholder span {
+        font-size: 3.2rem;
+    }
+
+    .side-info {
+        justify-content: center;
+        font-size: 0.78rem;
+    }
+
+    .side-info h2:not(:first-child) {
+        margin-top: 10px;
+    }
+
+    .topbar {
+        min-height: 62px;
+        padding: 0 20px;
+        overflow-x: auto;
+    }
+
+    .topbar nav {
+        gap: 24px;
+    }
+
+    .topbar a {
+        font-size: 0.9rem;
+    }
+
+    main {
+        padding: 0 20px 16px;
+    }
+
+    section h1,
+    section h2 {
+        width: calc(100% + 40px);
+        margin: 0 0 18px -20px;
+        padding: 7px 20px;
+        font-size: 1.25rem;
+    }
+
+    .section-content {
+        padding-bottom: 20px;
+    }
+
+    .intro {
+        font-size: 0.98rem;
+    }
+
+    .compact-list {
+        display: block;
+    }
+
+    .compact-list li + li {
+        margin-top: 5px;
+    }
+
+    .skill-list p {
+        display: block;
+    }
+
+    .skill-list p + p::before {
+        content: none;
+    }
+
+    footer {
+        margin: 0 20px;
+        padding-bottom: 22px;
+    }
+}

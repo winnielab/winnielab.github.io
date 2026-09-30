@@ -1,103 +1,89 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>我的个人主页</title>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-        }
-
-        nav {
-            background-color: #333;
-            padding: 1rem;
-        }
-
-        nav ul {
-            list-style: none;
-            display: flex;
-            justify-content: center;
-            gap: 2rem;
-        }
-
-        nav a {
-            color: white;
-            text-decoration: none;
-            font-size: 1.1rem;
-        }
-
-        nav a:hover {
-            color: #4CAF50;
-        }
-
-        .container {
-            max-width: 1200px;
-            margin: 0 auto;
-            padding: 2rem;
-        }
-
-        .hero {
-            text-align: center;
-            padding: 4rem 0;
-        }
-
-        .avatar {
-            width: 200px;
-            height: 200px;
-            border-radius: 50%;
-            margin-bottom: 1rem;
-            object-fit: cover;
-        }
-
-        section {
-            margin: 3rem 0;
-            padding: 2rem;
-            background-color: #f5f5f5;
-            border-radius: 10px;
-        }
-
-        footer {
-            background-color: #333;
-            color: white;
-            text-align: center;
-            padding: 1rem;
-            position: fixed;
-            bottom: 0;
-            width: 100%;
-        }
-    </style>
+    <meta name="description" content="Young's academic homepage — Master's student interested in machine learning and computer vision.">
+    <title>Young | Academic Homepage</title>
+    <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-    <!-- 导航栏 -->
-    <nav>
-        <ul>
-            <li><a href="index.html">首页</a></li>
-            <li><a href="about.html">关于我</a></li>
-        </ul>
-    </nav>
-<!-- 
-    <!-- 主体内容
-    <div class="container">
-        <section class="hero">
-            <img src="avatar.jpg" alt="头像" class="avatar">
-            <h1>欢迎来到我的个人主页</h1>
-            <p>网页开发者 & 设计师</p>
-            <a href="contact.html" style="display: inline-block; margin-top: 1rem; padding: 0.8rem 2rem; background-color: #4CAF50; color: white; text-decoration: none; border-radius: 5px;">联系我</a>
-        </section>
+    <div class="page">
+        <aside class="sidebar">
+            <a class="name" href="#home">Young</a>
 
-        <section>
-            <h2>最新动态</h2>
-            <p>这里可以添加你的最新动态或博客文章...</p>
-        </section>
-    </div> --> -->
+            <!-- Replace this block with: <img class="portrait" src="avatar.jpg" alt="Portrait of Young"> -->
+            <div class="portrait portrait-placeholder" aria-label="Photo placeholder">
+                <span>Y</span>
+            </div>
 
-    <!-- 页脚 -->
-    <footer>
-        <p>&copy; 2023 我的个人主页. All rights reserved.</p>
-    </footer>
+            <div class="side-info">
+                <h2>Email</h2>
+                <a href="mailto:jeasenyoung@gmail.com">jeasenyoung@gmail.com</a>
+
+                <h2>Links</h2>
+                <a href="https://github.com/aycJeasn" target="_blank" rel="noreferrer">GitHub</a>
+                <span>Google Scholar: Coming soon</span>
+            </div>
+        </aside>
+
+        <div class="main-column">
+            <header class="topbar" id="home">
+                <nav aria-label="Main navigation">
+                    <a href="#about">Home</a>
+                    <a href="#research">Research</a>
+                    <a href="#skills">Skills</a>
+                    <a href="#projects">Projects</a>
+                </nav>
+            </header>
+
+            <main>
+                <section id="about">
+                    <h1>About Me</h1>
+                    <div class="section-content intro">
+                        <p>
+                            Hi, I'm <strong>Young</strong>, a third-year Master's student in
+                            <strong>XXX</strong> at <strong>XXX University</strong>.
+                        </p>
+                        <p>
+                            My research focuses on machine learning and computer vision.
+                            I am currently working on <strong>XXX</strong>.
+                        </p>
+                    </div>
+                </section>
+
+                <section id="research">
+                    <h2>Research Interests</h2>
+                    <div class="section-content">
+                        <ul class="compact-list">
+                            <li>Machine Learning</li>
+                            <li>Computer Vision</li>
+                            <li>XXX</li>
+                        </ul>
+                    </div>
+                </section>
+
+                <section id="skills">
+                    <h2>Skills</h2>
+                    <div class="section-content skill-list">
+                        <p><strong>Programming:</strong> Python, C++, MATLAB</p>
+                        <p><strong>Frameworks &amp; Tools:</strong> PyTorch, Git, Linux</p>
+                    </div>
+                </section>
+
+                <section id="projects">
+                    <h2>Projects</h2>
+                    <div class="section-content">
+                        <p>More projects and research notes are coming soon.</p>
+                    </div>
+                </section>
+            </main>
+
+            <footer>
+                <span>Last updated: October 2026</span>
+                <span>© 2026 Young</span>
+            </footer>
+        </div>
+    </div>
 </body>
 </html>
