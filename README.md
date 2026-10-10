@@ -7,10 +7,11 @@ A lightweight, responsive academic homepage for GitHub Pages.
 Edit `index.html` and replace these placeholders before publishing:
 
 - `Young` — your preferred English name
-- `XXX University` — your university
-- `XXX` in the introduction — your major and current research topic
-- The third `XXX` under Research Interests — your third research interest
-- `jeasenyoung@gmail.com` — your preferred public email (currently copied from the previous site)
+- The `Agent Project` title and description — your project's public information
+
+The Research Interests section and its navigation link are currently commented
+out in `index.html`. Remove the surrounding HTML comments when you are ready to
+publish that section.
 
 To use a real portrait, add `avatar.jpg` to the project root and replace the
 placeholder block using the comment already included in `index.html`.
