@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="auto">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Young 的技术博客，记录 Java 后端、并发编程与工程实践。">
+    <meta name="theme-color" content="#7fc5d5">
+    <title>Blog · Young</title>
+    <link rel="stylesheet" href="blog.css">
+    <script src="blog-index.js" defer></script>
+</head>
+<body class="blog-index-page">
+    <header class="site-header">
+        <a class="brand" href="../index.html">Young</a>
+        <nav aria-label="博客导航">
+            <a href="../index.html#about">Home</a>
+            <a href="../index.html#projects">Projects</a>
+            <a href="index.html" aria-current="page">Blog</a>
+        </nav>
+        <button class="theme-toggle" type="button" aria-label="切换深色模式" title="切换深色模式">
+            <span class="theme-icon" aria-hidden="true">◐</span>
+        </button>
+    </header>
+
+    <main class="blog-index-shell">
+        <a class="blog-home-link" href="../index.html"><span aria-hidden="true">←</span> 返回个人主页</a>
+
+        <header class="blog-index-hero">
+            <div>
+                <p class="blog-index-kicker">Notes on software engineering</p>
+                <h1>Blog</h1>
+                <p class="blog-index-lead">记录 Java 后端、并发编程与工程实践。文章强调原理、代码与真实场景之间的联系，方便系统学习，也适合作为面试复习索引。</p>
+            </div>
+            <div class="blog-index-stat" aria-label="博客统计">
+                <strong>01</strong>
+                <span>篇文章</span>
+            </div>
+        </header>
+
+        <div class="blog-browser">
+            <aside class="blog-categories" aria-label="文章分类">
+                <p class="aside-label">分类</p>
+                <a href="#articles" aria-current="page"><span>全部文章</span><b>1</b></a>
+                <a href="#java"><span>Java</span><b>1</b></a>
+                <a href="#concurrency"><span>并发编程</span><b>1</b></a>
+            </aside>
+
+            <section class="blog-list" id="articles" aria-labelledby="articles-title">
+                <div class="blog-list-heading">
+                    <div>
+                        <p class="aside-label">文章归档</p>
+                        <h2 id="articles-title">全部文章</h2>
+                    </div>
+                    <span>按发布时间排序</span>
+                </div>
+
+                <article class="post-card" id="java">
+                    <a class="post-card__link" href="java-locks.html" aria-label="阅读《深入理解 Java 锁机制：从 synchronized 到 ReentrantLock》"></a>
+                    <div class="post-card__content">
+                        <div class="post-card__eyebrow" id="concurrency">Java / 并发编程</div>
+                        <h3>深入理解 Java 锁机制：从 synchronized 到 ReentrantLock</h3>
+                        <p>从线程安全问题出发，串联 synchronized、ReentrantLock、AQS、CAS、volatile 与读写锁，最后落到工程选型和面试表达。</p>
+                        <div class="post-card__tags" aria-label="文章标签">
+                            <span>Java</span>
+                            <span>JUC</span>
+                            <span>AQS</span>
+                            <span>CAS</span>
+                        </div>
+                    </div>
+                    <div class="post-card__meta">
+                        <time datetime="2026-10-14">2026-10-14</time>
+                        <span>约 28 分钟</span>
+                        <i aria-hidden="true">→</i>
+                    </div>
+                </article>
+
+                <div class="blog-list-end">
+                    <span></span>
+                    <p>更多文章正在整理中</p>
+                    <span></span>
+                </div>
+            </section>
+        </div>
+    </main>
+
+    <footer class="blog-index-footer">
+        <span>© 2026 Young</span>
+        <a href="https://github.com/winnielab" target="_blank" rel="noreferrer">GitHub <span aria-hidden="true">↗</span></a>
+    </footer>
+</body>
+</html>
