@@ -3,6 +3,7 @@
     --research: #e2ae37;
     --skills: #79af8b;
     --projects: #8c84bf;
+    --blog: #c47767;
     --text: #2e2e2e;
     --muted: #777;
     --page: #ffffff;
@@ -156,6 +157,65 @@ section h1 {
 
 #projects h2 {
     background: var(--projects);
+}
+
+#blog h2 {
+    background: var(--blog);
+}
+
+.blog-card {
+    max-width: 760px;
+    padding: 20px 22px;
+    border: 1px solid var(--line);
+    border-left: 4px solid var(--blog);
+    border-radius: 4px;
+    transition: border-color 160ms ease, transform 160ms ease;
+}
+
+.blog-card:hover {
+    border-color: color-mix(in srgb, var(--blog) 55%, var(--line));
+    transform: translateY(-2px);
+}
+
+.blog-card__meta {
+    margin-bottom: 7px;
+    color: var(--muted);
+    font-size: 0.78rem;
+}
+
+.blog-card h3 {
+    margin: 0 0 9px;
+    font-size: 1.08rem;
+}
+
+.blog-card p {
+    color: #555;
+}
+
+.blog-card__link {
+    display: inline-flex;
+    gap: 6px;
+    align-items: center;
+    color: #805148;
+    font-size: 0.86rem;
+    font-weight: 700;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --text: #e6edf3;
+        --muted: #9198a1;
+        --page: #0d1117;
+        --line: #30363d;
+    }
+
+    .blog-card p {
+        color: #b7bec8;
+    }
+
+    .blog-card__link {
+        color: #e09a8b;
+    }
 }
 
 .section-content {
