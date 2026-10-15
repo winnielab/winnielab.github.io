@@ -172,6 +172,10 @@ section h1 {
     transform: translateY(-2px);
 }
 
+.blog-card + .blog-card {
+    margin-top: 16px;
+}
+
 .blog-card__meta {
     margin-bottom: 7px;
     color: var(--muted);

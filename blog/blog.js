@@ -134,16 +134,18 @@
         return output;
     }
 
-    document.querySelectorAll('.code-block[data-language="java"]').forEach(function (block) {
+    document.querySelectorAll(".code-block").forEach(function (block) {
         const code = block.querySelector("code");
         const rawCode = code.textContent.replace(/^\n|\n$/g, "");
-        code.innerHTML = highlightJava(rawCode);
+        if (block.dataset.language === "java") {
+            code.innerHTML = highlightJava(rawCode);
+        }
 
         const button = document.createElement("button");
         button.type = "button";
         button.className = "copy-button";
         button.textContent = "复制代码";
-        button.setAttribute("aria-label", "复制 Java 代码");
+        button.setAttribute("aria-label", "复制代码");
         button.addEventListener("click", async function () {
             try {
                 await navigator.clipboard.writeText(rawCode);
@@ -173,7 +175,7 @@
         const link = document.createElement("a");
         link.href = "#" + target.id;
         link.dataset.level = isSectionHeading ? "2" : "3";
-        link.textContent = heading.textContent.replace(/^\d+\.\s*/, "");
+        link.textContent = heading.textContent.replace(/^\d+(?:\.\d+)*[.、]?\s*/, "");
         toc.appendChild(link);
         observedTargets.push(target);
         linksById.set(target.id, link);

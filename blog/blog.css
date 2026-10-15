@@ -1008,6 +1008,10 @@ td code {
     transform: translateY(-2px);
 }
 
+.post-card + .post-card {
+    margin-top: 16px;
+}
+
 .post-card:focus-visible {
     outline: 3px solid var(--sidebar-deep);
     outline-offset: 3px;

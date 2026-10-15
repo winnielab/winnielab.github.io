@@ -6,7 +6,7 @@
     <meta name="description" content="Young 的技术博客，记录 Java 后端、并发编程与工程实践。">
     <meta name="theme-color" content="#7fc5d5">
     <title>Blog · Young</title>
-    <link rel="stylesheet" href="blog.css">
+    <link rel="stylesheet" href="blog.css?v=20261015">
     <script src="blog-index.js" defer></script>
 </head>
 <body class="blog-index-page">
@@ -32,7 +32,7 @@
                 <p class="blog-index-lead">记录 Java 后端、并发编程与工程实践。文章强调原理、代码与真实场景之间的联系，方便系统学习，也适合作为面试复习索引。</p>
             </div>
             <div class="blog-index-stat" aria-label="博客统计">
-                <strong>01</strong>
+                <strong>02</strong>
                 <span>篇文章</span>
             </div>
         </header>
@@ -40,8 +40,9 @@
         <div class="blog-browser">
             <aside class="blog-categories" aria-label="文章分类">
                 <p class="aside-label">分类</p>
-                <a href="#articles" aria-current="page"><span>全部文章</span><b>1</b></a>
-                <a href="#java"><span>Java</span><b>1</b></a>
+                <a href="#articles" aria-current="page"><span>全部文章</span><b>2</b></a>
+                <a href="#articles"><span>Java</span><b>2</b></a>
+                <a href="#jvm"><span>JVM</span><b>1</b></a>
                 <a href="#concurrency"><span>并发编程</span><b>1</b></a>
             </aside>
 
@@ -54,7 +55,26 @@
                     <span>按发布时间排序</span>
                 </div>
 
-                <a class="post-card" id="java" href="/blog/java-locks.html" aria-label="阅读《深入理解 Java 锁机制：从 synchronized 到 ReentrantLock》">
+                <a class="post-card" id="jvm" href="/blog/jvm-memory-management.html" aria-label="阅读《深入理解 JVM 内存管理：从运行时数据区到垃圾回收机制》">
+                    <div class="post-card__content">
+                        <div class="post-card__eyebrow">Java / JVM</div>
+                        <h3>深入理解 JVM 内存管理：从运行时数据区到垃圾回收机制</h3>
+                        <p>从运行时数据区和对象生命周期出发，串联垃圾回收算法、G1 与 ZGC、OOM 排查、GC 日志和 Heap Dump 分析。</p>
+                        <div class="post-card__tags" aria-label="文章标签">
+                            <span>Java</span>
+                            <span>JVM</span>
+                            <span>GC</span>
+                            <span>性能调优</span>
+                        </div>
+                    </div>
+                    <div class="post-card__meta">
+                        <time datetime="2026-10-15">2026-10-15</time>
+                        <span>约 45 分钟</span>
+                        <i aria-hidden="true">→</i>
+                    </div>
+                </a>
+
+                <a class="post-card" id="java-locks" href="/blog/java-locks.html" aria-label="阅读《深入理解 Java 锁机制：从 synchronized 到 ReentrantLock》">
                     <div class="post-card__content">
                         <div class="post-card__eyebrow" id="concurrency">Java / 并发编程</div>
                         <h3>深入理解 Java 锁机制：从 synchronized 到 ReentrantLock</h3>

@@ -1,0 +1,670 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="auto">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="深入理解 JVM 内存管理：从运行时数据区、对象创建与内存分配，到垃圾收集器、GC 调优和 OOM 排查。">
+    <meta name="theme-color" content="#7fc5d5">
+    <title>深入理解 JVM 内存管理：从运行时数据区到垃圾回收机制 · Young</title>
+    <link rel="stylesheet" href="blog.css?v=20261015">
+    <script src="blog.js?v=20261015-2" defer></script>
+</head>
+<body>
+    <div class="reading-progress" aria-hidden="true"><span></span></div>
+
+    <header class="site-header">
+        <a class="brand" href="/index.html">Young</a>
+        <nav aria-label="博客导航">
+            <a href="/index.html#about">Home</a>
+            <a href="/index.html#projects">Projects</a>
+            <a href="/blog/index.html" aria-current="page">Blog</a>
+        </nav>
+        <button class="theme-toggle" type="button" aria-label="切换深色模式" title="切换深色模式">
+            <span class="theme-icon" aria-hidden="true">◐</span>
+        </button>
+    </header>
+
+    <div class="article-shell">
+        <aside class="toc-panel" aria-label="文章目录">
+            <a class="toc-back" href="/blog/index.html"><span aria-hidden="true">←</span> 博客首页</a>
+            <p class="toc-title">目录</p>
+            <nav id="toc"></nav>
+        </aside>
+
+        <main class="article-main">
+            <header class="article-header">
+                <p class="article-kicker">Java / JVM</p>
+                <h1>深入理解 JVM 内存管理：<br><span>从运行时数据区到垃圾回收机制</span></h1>
+                <p class="article-lead">从规范定义的运行时数据区出发，追踪对象的创建、分配与回收，再把 GC 日志、Heap Dump 和线上内存增长串成一套可执行的排查方法。</p>
+                <div class="article-meta">
+                    <span>发布于 2026-10-15</span>
+                    <span>约 45 分钟</span>
+                    <span>Java · JVM · GC · 性能调优</span>
+                </div>
+            </header>
+
+            <article>
+                <div class="article-note article-note--scope">
+                    <strong>先划清规范与实现的边界</strong>
+                    <p>运行时数据区来自 JVM 规范；对象头、TLAB、分代布局、具体收集器和诊断参数主要是 HotSpot 实现。文中的实现细节均带有版本或收集器前提，不能直接推广到所有 JVM。</p>
+                </div>
+
+                <section id="overview">
+                    <h2>1. JVM 内存管理解决什么问题</h2>
+                    <p>JVM 是 Java 字节码的执行环境。它负责类加载、字节码解释与即时编译、线程调度协作，也负责为对象分配内存并回收不再可达的对象。Java 代码面对的是引用和对象，JVM 则把这些抽象映射到底层内存、机器指令和操作系统资源。</p>
+                    <p>自动内存管理解决的是“对象何时分配、何时可以回收”。开发者通常不用逐个调用 <code>free</code>，但 GC 只能回收<strong>不可达</strong>对象。如果缓存、静态集合或长生命周期线程仍然持有引用，业务已经不用的对象在 GC 看来仍然活着，于是内存泄漏仍会发生；如果存活数据或分配速度超过可用内存，就会发生内存溢出。</p>
+
+                    <div class="code-block" data-language="java">
+                        <pre><code>import java.util.ArrayList;
+import java.util.List;
+
+public final class MemoryLifecycleDemo {
+    private static final List&lt;byte[]&gt; CACHE = new ArrayList&lt;&gt;();
+
+    public static void main(String[] args) {
+        byte[] requestBuffer = new byte[1024 * 1024];
+        process(requestBuffer);
+
+        requestBuffer = null; // 只是不再由该局部变量引用，并不等于立即回收
+        CACHE.add(new byte[1024 * 1024]); // 静态集合会继续保持强引用
+    }
+
+    private static void process(byte[] data) {
+        System.out.println(data.length);
+    }
+}</code></pre>
+                    </div>
+                    <p><code>requestBuffer</code>失去可达路径后才具备回收资格，而且何时执行 GC 由 JVM 决定；<code>CACHE</code>中的数组则会一直存活到元素被移除、类被卸载或进程结束。理解 JVM 内存管理，本质上是在回答三件事：数据放在哪里、对象为什么还活着、回收为何跟不上分配。</p>
+                </section>
+
+                <section id="runtime-data-areas">
+                    <h2>2. JVM 运行时数据区</h2>
+                    <p>JVM 规范把运行期内存划分为若干逻辑区域。程序计数器、Java 虚拟机栈和本地方法栈随线程创建；堆和方法区在 JVM 启动时创建并由线程共享。规范描述职责和异常条件，并不规定它们必须对应哪一段连续物理内存。</p>
+
+                    <figure class="tech-figure">
+                        <svg viewBox="0 0 780 410" role="img" aria-labelledby="runtime-title runtime-desc">
+                            <title id="runtime-title">JVM 运行时数据区示意图</title>
+                            <desc id="runtime-desc">左侧为两个线程各自私有的程序计数器、Java 虚拟机栈和本地方法栈，右侧为线程共享的 Java 堆和方法区。</desc>
+                            <g class="svg-card--muted"><rect x="18" y="18" width="360" height="360" rx="10"/><text x="198" y="48">线程私有：随线程生命周期创建与销毁</text></g>
+                            <g class="svg-card--accent"><rect x="38" y="72" width="150" height="276" rx="8"/><text x="113" y="100">线程 A</text></g>
+                            <g class="svg-card"><rect x="52" y="122" width="122" height="50" rx="6"/><text x="113" y="144">程序计数器</text><text class="svg-small" x="113" y="160">当前字节码位置</text></g>
+                            <g class="svg-card"><rect x="52" y="190" width="122" height="64" rx="6"/><text x="113" y="216">Java 虚拟机栈</text><text class="svg-small" x="113" y="236">栈帧 / 方法调用</text></g>
+                            <g class="svg-card"><rect x="52" y="272" width="122" height="54" rx="6"/><text x="113" y="296">本地方法栈</text><text class="svg-small" x="113" y="313">Native 方法</text></g>
+                            <g class="svg-card--accent"><rect x="208" y="72" width="150" height="276" rx="8"/><text x="283" y="100">线程 B</text></g>
+                            <g class="svg-card"><rect x="222" y="122" width="122" height="50" rx="6"/><text x="283" y="144">程序计数器</text><text class="svg-small" x="283" y="160">独立执行位置</text></g>
+                            <g class="svg-card"><rect x="222" y="190" width="122" height="64" rx="6"/><text x="283" y="216">Java 虚拟机栈</text><text class="svg-small" x="283" y="236">独立栈帧链</text></g>
+                            <g class="svg-card"><rect x="222" y="272" width="122" height="54" rx="6"/><text x="283" y="296">本地方法栈</text><text class="svg-small" x="283" y="313">实现可选</text></g>
+                            <g class="svg-card--muted"><rect x="402" y="18" width="360" height="360" rx="10"/><text x="582" y="48">线程共享：随 JVM 生命周期存在</text></g>
+                            <g class="svg-card--accent"><rect x="426" y="74" width="312" height="166" rx="8"/><text x="582" y="108">Java 堆</text><text class="svg-small" x="582" y="132">对象实例与数组的逻辑分配区域</text><text class="svg-small" x="582" y="156">垃圾收集的主要管理区域</text><text class="svg-small" x="582" y="180">具体分代 / Region 布局由收集器决定</text></g>
+                            <g class="svg-card"><rect x="426" y="260" width="312" height="88" rx="8"/><text x="582" y="290">方法区</text><text class="svg-small" x="582" y="312">类结构、运行时常量池、方法数据与代码</text><text class="svg-small" x="582" y="330">HotSpot JDK 8+ 常以 Metaspace 实现类元数据</text></g>
+                        </svg>
+                        <figcaption>概念图：区域划分来自 JVM 规范；Metaspace、堆分代和 Region 属于 HotSpot / 收集器实现层。</figcaption>
+                    </figure>
+
+                    <h3 id="program-counter">2.1 程序计数器</h3>
+                    <p>每个 JVM 线程都有独立的程序计数器（PC Register）。执行非 native 方法时，它记录当前 JVM 指令的位置；线程切换后，执行引擎依靠线程自己的位置继续运行。执行 native 方法时，其值由规范定义为未定义。</p>
+                    <p>程序计数器只保存很小的执行位置信息。JVM 规范没有为它规定 <code>OutOfMemoryError</code> 条件，因此它常被称为唯一没有规范级 OOM 的运行时数据区。</p>
+
+                    <h3 id="jvm-stack">2.2 Java 虚拟机栈与栈帧</h3>
+                    <p>每个线程拥有自己的 Java 虚拟机栈。每次调用方法，JVM 创建一个栈帧并使其成为当前帧；方法正常返回或抛出未捕获异常时，当前帧被丢弃，调用者的帧重新成为当前帧。一个栈帧至少包含局部变量表、操作数栈、指向当前类运行时常量池的引用，以及支持方法返回和异常分派的信息。</p>
+
+                    <figure class="tech-figure">
+                        <svg viewBox="0 0 780 330" role="img" aria-labelledby="frame-title frame-desc">
+                            <title id="frame-title">方法调用与栈帧结构</title>
+                            <desc id="frame-desc">线程栈内从 main 到 service 再到 calculate 依次压入栈帧，并展示当前栈帧的局部变量表、操作数栈和动态链接。</desc>
+                            <g class="svg-card--muted"><rect x="30" y="22" width="265" height="286" rx="10"/><text x="162" y="50">线程的 Java 虚拟机栈</text></g>
+                            <g class="svg-card"><rect x="55" y="228" width="215" height="55" rx="5"/><text x="162" y="252">main() 栈帧</text><text class="svg-small" x="162" y="270">最早入栈</text></g>
+                            <g class="svg-card"><rect x="55" y="155" width="215" height="55" rx="5"/><text x="162" y="179">service() 栈帧</text><text class="svg-small" x="162" y="197">调用 calculate()</text></g>
+                            <g class="svg-card--accent"><rect x="55" y="78" width="215" height="59" rx="5"/><text x="162" y="103">calculate() 当前帧</text><text class="svg-small" x="162" y="121">返回后出栈</text></g>
+                            <path class="svg-line" d="M318 108 H382"/><polygon class="svg-arrow-fill" points="382,108 372,102 372,114"/>
+                            <g class="svg-card--accent"><rect x="402" y="36" width="340" height="255" rx="10"/><text x="572" y="65">当前栈帧</text></g>
+                            <g class="svg-card"><rect x="425" y="87" width="136" height="72" rx="6"/><text x="493" y="115">局部变量表</text><text class="svg-small" x="493" y="135">基本值 / reference</text></g>
+                            <g class="svg-card"><rect x="582" y="87" width="136" height="72" rx="6"/><text x="650" y="115">操作数栈</text><text class="svg-small" x="650" y="135">字节码计算工作区</text></g>
+                            <g class="svg-card"><rect x="425" y="181" width="136" height="72" rx="6"/><text x="493" y="209">动态链接</text><text class="svg-small" x="493" y="229">符号引用解析</text></g>
+                            <g class="svg-card"><rect x="582" y="181" width="136" height="72" rx="6"/><text x="650" y="209">返回 / 异常信息</text><text class="svg-small" x="650" y="229">恢复调用者状态</text></g>
+                        </svg>
+                        <figcaption>栈帧概念图。规范允许栈帧采用不同的实际分配方式，并不要求整段栈内存连续。</figcaption>
+                    </figure>
+
+                    <p>局部变量表中的引用不是对象本身，它只是通向对象的 reference 值。基本类型局部值、引用值和方法执行的中间结果与栈帧生命周期相关；对象通常由堆管理。递归过深或调用链所需栈空间超过上限，会抛出 <code>StackOverflowError</code>。规范还允许动态扩展的 JVM 栈在无法扩展、或新线程初始栈无法创建时抛出 <code>OutOfMemoryError</code>，但具体行为取决于 JVM 实现和平台。</p>
+
+                    <h3 id="native-method-stack">2.3 本地方法栈</h3>
+                    <p>本地方法栈服务于用其他语言实现的 native 方法，也可能被 JVM 的解释器实现使用。它与 Java 虚拟机栈职责相似，但服务对象不同；并非所有 JVM 都必须提供独立的本地方法栈。规范同样为它定义了可能的 <code>StackOverflowError</code>，以及动态扩展或创建失败时的 <code>OutOfMemoryError</code>。</p>
+
+                    <h3 id="heap">2.4 Java 堆</h3>
+                    <p>Java 堆由所有线程共享，是规范中分配类实例和数组的逻辑区域，也是垃圾收集器的主要工作场所。当存活对象占用加上新的分配需求超过可扩展的堆上限，并且 GC 无法回收足够空间时，JVM 抛出 <code>OutOfMemoryError: Java heap space</code>。</p>
+                    <p>在传统 HotSpot 分代收集器中，堆常被划分为新生代和老年代，新生代又常见 Eden 与两个 Survivor 区。多数对象先在 Eden 分配，经历回收后存活的对象复制到 Survivor，并在年龄、空间担保或大对象策略等条件作用下进入老年代。但这不是 JVM 规范规定的物理布局：G1 使用等大小 Region 承载年轻代和老年代角色，ZGC 的实现又不同。</p>
+
+                    <figure class="tech-figure">
+                        <svg viewBox="0 0 780 285" role="img" aria-labelledby="heap-title heap-desc">
+                            <title id="heap-title">典型分代堆与 G1 Region 对比</title>
+                            <desc id="heap-desc">上半部分为传统的 Eden、Survivor 和老年代连续逻辑分区，下半部分为 G1 中不同角色的 Region。</desc>
+                            <text class="svg-label" x="93" y="28">传统分代收集器的典型布局</text>
+                            <g class="svg-card--accent"><rect x="24" y="45" width="320" height="92" rx="7"/><text x="184" y="68">新生代</text></g>
+                            <g class="svg-card"><rect x="42" y="82" width="166" height="38" rx="4"/><text x="125" y="106">Eden</text></g>
+                            <g class="svg-card"><rect x="218" y="82" width="50" height="38" rx="4"/><text class="svg-small" x="243" y="105">S0</text></g>
+                            <g class="svg-card"><rect x="277" y="82" width="50" height="38" rx="4"/><text class="svg-small" x="302" y="105">S1</text></g>
+                            <g class="svg-card"><rect x="362" y="45" width="394" height="92" rx="7"/><text x="559" y="86">老年代</text><text class="svg-small" x="559" y="107">长期存活或晋升对象</text></g>
+                            <text class="svg-label" x="91" y="177">G1：相同大小的 Region 动态承担角色</text>
+                            <g class="svg-card--accent"><rect x="24" y="194" width="84" height="58" rx="4"/><text x="66" y="221">Eden</text></g>
+                            <g class="svg-card"><rect x="116" y="194" width="84" height="58" rx="4"/><text x="158" y="221">Old</text></g>
+                            <g class="svg-card--muted"><rect x="208" y="194" width="84" height="58" rx="4"/><text x="250" y="221">Free</text></g>
+                            <g class="svg-card"><rect x="300" y="194" width="84" height="58" rx="4"/><text x="342" y="221">Survivor</text></g>
+                            <g class="svg-card"><rect x="392" y="194" width="84" height="58" rx="4"/><text x="434" y="221">Old</text></g>
+                            <g class="svg-card--accent"><rect x="484" y="194" width="84" height="58" rx="4"/><text x="526" y="221">Eden</text></g>
+                            <g class="svg-card"><rect x="576" y="194" width="84" height="58" rx="4"/><text class="svg-small" x="618" y="217">Humongous</text><text class="svg-small" x="618" y="234">连续 Region</text></g>
+                            <g class="svg-card--muted"><rect x="668" y="194" width="84" height="58" rx="4"/><text x="710" y="221">Free</text></g>
+                        </svg>
+                        <figcaption>实现示意：分代是对象生命周期假设；具体空间是否连续、如何分区由收集器决定。</figcaption>
+                    </figure>
+
+                    <h3 id="method-area">2.5 方法区、永久代与元空间</h3>
+                    <p>方法区是 JVM 规范中的共享逻辑区域，保存每个类的结构、运行时常量池、字段和方法数据，以及方法和构造器代码。永久代（PermGen）与元空间（Metaspace）则是 HotSpot 的实现术语，不能直接与“方法区”画等号。</p>
+                    <p>HotSpot 在 JDK 8 移除了永久代，把主要类元数据迁移到使用本地内存的 Metaspace。这样元数据容量不再固定挤占 Java 堆，但仍受到进程可用本地内存和 <code>-XX:MaxMetaspaceSize</code> 等约束。动态代理、反复创建且无法卸载的 ClassLoader、字节码生成框架都可能造成 <code>OutOfMemoryError: Metaspace</code>。类卸载依赖对应 ClassLoader 不再可达，并非删除一个 Class 引用就会立即发生。</p>
+
+                    <h3 id="runtime-summary">2.6 运行时数据区对比</h3>
+                    <div class="comparison-table-wrap">
+                        <table class="comparison-table">
+                            <thead><tr><th>内存区域</th><th>线程共享</th><th>主要作用</th><th>JVM 规范定义的常见异常</th></tr></thead>
+                            <tbody>
+                                <tr><td>程序计数器</td><td>否</td><td>记录当前非 native JVM 指令位置</td><td>无规范定义的 OOM</td></tr>
+                                <tr><td>Java 虚拟机栈</td><td>否</td><td>保存栈帧，支撑方法调用与执行</td><td>StackOverflowError；特定扩展/创建失败时 OOM</td></tr>
+                                <tr><td>本地方法栈</td><td>否</td><td>支持 native 方法或 JVM 本地实现</td><td>StackOverflowError；特定扩展/创建失败时 OOM</td></tr>
+                                <tr><td>Java 堆</td><td>是</td><td>类实例与数组的逻辑分配区域</td><td>OutOfMemoryError</td></tr>
+                                <tr><td>方法区</td><td>是</td><td>类结构、运行时常量池、方法数据与代码</td><td>OutOfMemoryError</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+
+                <section id="object-lifecycle">
+                    <h2>3. Java 对象的创建与内存分配</h2>
+                    <h3 id="object-creation">3.1 从 new 到构造完成</h3>
+                    <ol>
+                        <li><strong>类加载检查：</strong>执行 <code>new</code> 时，JVM 解析常量池中的符号引用，确认目标类已经完成所需的加载、链接和初始化。</li>
+                        <li><strong>分配内存：</strong>根据对象布局所需大小，从堆的可分配空间、当前线程的 TLAB 或收集器提供的分配路径取得内存。</li>
+                        <li><strong>零值初始化：</strong>实例字段先获得类型对应的默认零值，使对象在 Java 语义上具备确定初始状态。</li>
+                        <li><strong>设置对象头：</strong>HotSpot 会写入类元数据指针以及哈希、GC 年龄、锁状态等运行期信息所需的对象头。</li>
+                        <li><strong>执行构造逻辑：</strong>从 Java 语言视角执行实例字段初始化和构造方法，最终把可用引用交给调用方。</li>
+                    </ol>
+                    <p>这是便于理解的主路径。JIT 逃逸分析可能进行标量替换、消除分配，收集器也可能有不同的慢路径；不能把这五步理解为每个对象都逐条执行的固定机器指令序列。</p>
+
+                    <h3 id="object-layout">3.2 HotSpot 常见对象内存布局</h3>
+                    <figure class="tech-figure">
+                        <svg viewBox="0 0 780 305" role="img" aria-labelledby="layout-title layout-desc">
+                            <title id="layout-title">HotSpot 常见对象布局与引用访问</title>
+                            <desc id="layout-desc">栈帧中的引用直接指向堆中对象，对象由对象头、实例数据和对齐填充组成。</desc>
+                            <g class="svg-card--muted"><rect x="28" y="62" width="190" height="184" rx="9"/><text x="123" y="91">当前栈帧</text></g>
+                            <g class="svg-card"><rect x="52" y="118" width="142" height="72" rx="6"/><text x="123" y="146">局部变量 user</text><text class="svg-small" x="123" y="166">reference 值</text></g>
+                            <path class="svg-line" d="M194 154 H307"/><polygon class="svg-arrow-fill" points="307,154 297,148 297,160"/><text class="svg-label" x="250" y="143">HotSpot 常见：直接指针</text>
+                            <g class="svg-card--accent"><rect x="326" y="30" width="426" height="244" rx="10"/><text x="539" y="58">堆中的对象</text></g>
+                            <g class="svg-card"><rect x="350" y="78" width="378" height="66" rx="6"/><text x="539" y="103">对象头</text><text class="svg-small" x="539" y="123">Mark Word + Klass Pointer（数组还含长度）</text></g>
+                            <g class="svg-card"><rect x="350" y="158" width="378" height="54" rx="6"/><text x="539" y="180">实例数据</text><text class="svg-small" x="539" y="198">字段内容与实现决定的排列</text></g>
+                            <g class="svg-card--muted"><rect x="350" y="225" width="378" height="28" rx="6"/><text class="svg-small" x="539" y="244">对齐填充（不一定存在）</text></g>
+                        </svg>
+                        <figcaption>HotSpot 概念图。对象头位宽、压缩类指针、字段排列和对齐均与 JDK、VM 参数和平台有关。</figcaption>
+                    </figure>
+                    <p><strong>Mark Word</strong>复用一段机器字宽的数据保存哈希、GC 年龄和锁相关状态等信息；<strong>Klass Pointer</strong>把对象关联到类元数据。数组通常还需要长度字段。对象头曾在上一篇<a href="/blog/java-locks.html#jdk-lock-evolution">《Java 锁机制》对象头与锁状态</a>中用于解释 synchronized，本节则把它放回完整对象布局中。</p>
+
+                    <h3 id="object-allocation">3.3 指针碰撞、空闲列表与 TLAB</h3>
+                    <p>如果可用空间规整，分配器可以移动“已用 / 空闲”边界完成<strong>指针碰撞</strong>；如果空间碎片化，则需要维护<strong>空闲列表</strong>寻找合适区域。实际选择与收集器及当前分配区域有关。</p>
+                    <p>多线程同时移动分配指针会产生竞争。HotSpot 常为线程划分 TLAB（Thread Local Allocation Buffer），大多数小对象先在线程私有缓冲区顺序分配；TLAB 申请、耗尽后的慢路径或共享区域分配再通过 CAS 等机制协调。CAS 的原子更新原理可参考上一篇文章的<a href="/blog/java-locks.html#cas">CAS 与乐观锁</a>。</p>
+                    <p>“对象优先在 Eden”“大对象直接进入老年代”“达到某个年龄晋升”都是特定收集器与配置下的典型行为，不是 JVM 规范的统一承诺。G1 对 Humongous 对象使用连续 Region，ZGC 又有自己的分配与重定位策略。</p>
+
+                    <h3 id="object-access">3.4 句柄与直接指针</h3>
+                    <p>引用可以通过句柄间接定位对象，也可以直接指向对象地址。句柄方式在对象移动时只需更新句柄中的地址，引用本身更稳定；直接指针少一次间接访问，HotSpot 的普通对象访问通常采用这种方式。JVM 规范只定义 reference 的语义，不规定引用值必须是哪种物理表示。</p>
+                    <div class="article-note">
+                        <strong>面试中的“对象一定在堆上吗”</strong>
+                        <p>规范模型中，类实例和数组由堆分配；在优化后的 HotSpot 中，逃逸分析可能让分配被标量替换甚至完全消除。回答时要同时给出规范语义与 JIT 优化边界。</p>
+                    </div>
+                </section>
+
+                <section id="garbage-collection">
+                    <h2>4. JVM 如何判断并回收垃圾</h2>
+                    <h3 id="garbage-object">4.1 垃圾对象不是“业务不用”，而是不可达</h3>
+                    <p>垃圾收集器的目标是找出程序之后无法再访问的对象，回收其空间，并尽量控制暂停、吞吐和额外内存开销。业务认为过期的缓存项，如果仍在全局 Map 中，就不是 GC 意义上的垃圾。</p>
+
+                    <h3 id="reference-counting">4.2 引用计数法及循环引用</h3>
+                    <p>引用计数为每个对象维护被引用次数，计数为零即可回收。它判断直接、回收及时，但需要维护计数，且朴素实现无法处理环。下面两个对象彼此引用，即使外部引用都被清空，它们的计数仍不为零：</p>
+                    <div class="code-block" data-language="java">
+                        <pre><code>public final class ReferenceCycle {
+    private ReferenceCycle peer;
+
+    public static void main(String[] args) {
+        ReferenceCycle left = new ReferenceCycle();
+        ReferenceCycle right = new ReferenceCycle();
+        left.peer = right;
+        right.peer = left;
+
+        left = null;
+        right = null; // 两个对象形成环，但已无法从程序入口访问
+    }
+}</code></pre>
+                    </div>
+                    <p>主流 HotSpot 垃圾收集器不是靠朴素引用计数判断对象存活，而是使用可达性分析，所以可以回收这种孤立环。</p>
+
+                    <h3 id="reachability">4.3 GC Roots 与可达性分析</h3>
+                    <p>可达性分析从一组 GC Roots 出发沿引用关系遍历。能够到达的对象保持存活；无法从任何 Root 到达的对象才成为回收候选。常见 Roots 包括活动线程栈帧中的引用、已加载类关联的静态引用、JNI 引用以及 JVM 内部保持的特定引用。具体 Root 集合与实现和收集阶段有关。</p>
+
+                    <figure class="tech-figure">
+                        <svg viewBox="0 0 780 300" role="img" aria-labelledby="roots-title roots-desc">
+                            <title id="roots-title">GC Roots 可达性分析</title>
+                            <desc id="roots-desc">线程栈、静态字段和 JNI 引用作为根，可到达对象被保留，右侧孤立循环不可达并可被回收。</desc>
+                            <g class="svg-card--accent"><rect x="24" y="32" width="164" height="54" rx="6"/><text x="106" y="57">活动线程栈</text><text class="svg-small" x="106" y="74">局部 reference</text></g>
+                            <g class="svg-card--accent"><rect x="24" y="122" width="164" height="54" rx="6"/><text x="106" y="147">类静态引用</text><text class="svg-small" x="106" y="164">已加载类关联</text></g>
+                            <g class="svg-card--accent"><rect x="24" y="212" width="164" height="54" rx="6"/><text x="106" y="237">JNI / JVM Roots</text><text class="svg-small" x="106" y="254">实现相关根集合</text></g>
+                            <path class="svg-line" d="M188 59 H275"/><path class="svg-line" d="M188 149 H275"/><path class="svg-line" d="M188 239 H275"/>
+                            <g class="svg-card"><rect x="276" y="54" width="120" height="54" rx="27"/><text x="336" y="85">对象 A</text></g>
+                            <g class="svg-card"><rect x="276" y="126" width="120" height="54" rx="27"/><text x="336" y="157">对象 B</text></g>
+                            <g class="svg-card"><rect x="276" y="198" width="120" height="54" rx="27"/><text x="336" y="229">对象 C</text></g>
+                            <path class="svg-line" d="M396 81 H478"/><path class="svg-line" d="M396 153 H478"/>
+                            <g class="svg-card"><rect x="479" y="72" width="120" height="54" rx="27"/><text x="539" y="103">对象 D</text></g>
+                            <g class="svg-card"><rect x="479" y="144" width="120" height="54" rx="27"/><text x="539" y="175">对象 E</text></g>
+                            <text class="svg-label" x="440" y="258">可达对象：保留</text>
+                            <g class="svg-card--muted"><rect x="635" y="58" width="118" height="54" rx="27"/><text x="694" y="89">对象 X</text></g>
+                            <g class="svg-card--muted"><rect x="635" y="168" width="118" height="54" rx="27"/><text x="694" y="199">对象 Y</text></g>
+                            <path class="svg-line svg-line--dashed" d="M694 112 V168"/><path class="svg-line svg-line--dashed" d="M676 168 C620 146 620 114 676 112"/>
+                            <text class="svg-label" x="694" y="253">孤立循环：不可达</text>
+                        </svg>
+                        <figcaption>概念图：对象 X/Y 即使互相引用，只要没有从 GC Roots 出发的路径，仍可被回收。</figcaption>
+                    </figure>
+
+                    <h3 id="reference-types">4.4 强、软、弱与虚引用</h3>
+                    <div class="code-block" data-language="java">
+                        <pre><code>import java.lang.ref.PhantomReference;
+import java.lang.ref.ReferenceQueue;
+import java.lang.ref.SoftReference;
+import java.lang.ref.WeakReference;
+
+public final class ReferenceTypes {
+    public static void main(String[] args) {
+        Object strong = new Object();
+        SoftReference&lt;Object&gt; soft = new SoftReference&lt;&gt;(new Object());
+        WeakReference&lt;Object&gt; weak = new WeakReference&lt;&gt;(new Object());
+
+        ReferenceQueue&lt;Object&gt; queue = new ReferenceQueue&lt;&gt;();
+        PhantomReference&lt;Object&gt; phantom =
+                new PhantomReference&lt;&gt;(new Object(), queue);
+
+        System.out.println(strong != null);
+        System.out.println(soft.get());
+        System.out.println(weak.get());
+        System.out.println(phantom.get()); // 始终为 null
+    }
+}</code></pre>
+                    </div>
+                    <ul>
+                        <li><strong>强引用：</strong>普通引用。只要从 Root 强可达，对象就不会被正常 GC 回收。</li>
+                        <li><strong>软引用：</strong>内存压力下可被清理，具体时机由实现决定；不应把它当成可预测的业务缓存淘汰策略。</li>
+                        <li><strong>弱引用：</strong>对象只剩弱可达时，GC 可以清理它，常用于不阻止对象回收的关联结构。</li>
+                        <li><strong>虚引用：</strong><code>get()</code>始终返回 null，必须配合 <code>ReferenceQueue</code>感知回收阶段，常用于堆外资源清理协调；现代 Java 通常优先考虑 <code>Cleaner</code>等更安全封装。</li>
+                    </ul>
+
+                    <h3 id="gc-algorithms">4.5 三类基础回收算法</h3>
+                    <figure class="tech-figure">
+                        <svg viewBox="0 0 780 330" role="img" aria-labelledby="algo-title algo-desc">
+                            <title id="algo-title">标记清除、标记复制和标记整理对比</title>
+                            <desc id="algo-desc">展示三种回收算法处理存活块和垃圾块后产生的不同内存布局。</desc>
+                            <text class="svg-label" x="88" y="28">标记—清除</text>
+                            <g class="svg-card"><rect x="24" y="45" width="105" height="42"/><text class="svg-small" x="76" y="70">活</text></g><g class="svg-card--muted"><rect x="129" y="45" width="72" height="42"/><text class="svg-small" x="165" y="70">垃圾</text></g><g class="svg-card"><rect x="201" y="45" width="58" height="42"/><text class="svg-small" x="230" y="70">活</text></g><g class="svg-card--muted"><rect x="259" y="45" width="94" height="42"/><text class="svg-small" x="306" y="70">垃圾</text></g>
+                            <path class="svg-line" d="M188 99 V128"/><polygon class="svg-arrow-fill" points="188,128 182,118 194,118"/>
+                            <g class="svg-card"><rect x="24" y="140" width="105" height="42"/><text class="svg-small" x="76" y="165">活</text></g><g class="svg-card--muted"><rect x="129" y="140" width="72" height="42"/><text class="svg-small" x="165" y="165">空洞</text></g><g class="svg-card"><rect x="201" y="140" width="58" height="42"/><text class="svg-small" x="230" y="165">活</text></g><g class="svg-card--muted"><rect x="259" y="140" width="94" height="42"/><text class="svg-small" x="306" y="165">空洞</text></g>
+                            <text class="svg-label" x="529" y="28">标记—复制</text>
+                            <g class="svg-card--accent"><rect x="414" y="45" width="160" height="72" rx="5"/><text x="494" y="75">From</text><text class="svg-small" x="494" y="96">活 / 垃圾混合</text></g><g class="svg-card--muted"><rect x="594" y="45" width="160" height="72" rx="5"/><text x="674" y="75">To</text><text class="svg-small" x="674" y="96">预留空间</text></g>
+                            <path class="svg-line" d="M574 135 H594"/><polygon class="svg-arrow-fill" points="594,135 584,129 584,141"/>
+                            <g class="svg-card--muted"><rect x="414" y="153" width="160" height="72" rx="5"/><text x="494" y="184">From 清空</text></g><g class="svg-card--accent"><rect x="594" y="153" width="160" height="72" rx="5"/><text x="674" y="181">存活对象连续</text><text class="svg-small" x="674" y="202">复制到 To</text></g>
+                            <text class="svg-label" x="88" y="232">标记—整理</text>
+                            <g class="svg-card"><rect x="24" y="247" width="62" height="42"/><text class="svg-small" x="55" y="272">活</text></g><g class="svg-card"><rect x="86" y="247" width="62" height="42"/><text class="svg-small" x="117" y="272">活</text></g><g class="svg-card"><rect x="148" y="247" width="62" height="42"/><text class="svg-small" x="179" y="272">活</text></g><g class="svg-card--muted"><rect x="210" y="247" width="143" height="42"/><text class="svg-small" x="281" y="272">连续空闲空间</text></g>
+                            <text class="svg-label" x="535" y="282">现代收集器通常组合算法与并发 / 并行阶段</text>
+                        </svg>
+                        <figcaption>概念图：真实收集器还需处理并发修改、引用更新、卡表、转移失败等问题。</figcaption>
+                    </figure>
+                    <div class="comparison-table-wrap">
+                        <table class="comparison-table">
+                            <thead><tr><th>算法</th><th>核心动作</th><th>优势</th><th>代价与适用场景</th></tr></thead>
+                            <tbody>
+                                <tr><td>标记—清除</td><td>标记存活对象，清扫其余空间</td><td>不必移动全部存活对象</td><td>产生碎片；适合存活对象较多且允许空闲列表管理的场景</td></tr>
+                                <tr><td>标记—复制</td><td>把存活对象复制到另一空间</td><td>分配快、回收后空间规整</td><td>需要转移对象和预留空间；适合存活率较低的区域</td></tr>
+                                <tr><td>标记—整理</td><td>标记后移动存活对象并压紧</td><td>消除碎片，获得连续空间</td><td>移动与更新引用成本高；常用于存活率较高区域或兜底整理</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+
+                <section id="collectors">
+                    <h2>5. 常见 HotSpot 垃圾收集器</h2>
+                    <h3 id="serial-gc">5.1 Serial GC：小而直接</h3>
+                    <p>Serial GC 使用单个 GC 线程完成主要回收工作，并在回收阶段暂停应用线程。它没有多 GC 线程协作开销，适合小堆、客户端工具、资源受限容器或对停顿不敏感的简单任务；可用 <code>-XX:+UseSerialGC</code>显式选择。</p>
+
+                    <h3 id="parallel-gc">5.2 Parallel GC：吞吐量优先</h3>
+                    <p>Parallel GC 与 Serial GC 一样属于分代收集器，但使用多个线程并行完成回收，目标偏向提高应用运行时间占比，常称 Throughput Collector。它适合批处理、离线计算等更关心总完成时间而非单次低延迟的负载，可用 <code>-XX:+UseParallelGC</code>选择。</p>
+
+                    <h3 id="cms">5.3 CMS：理解并发回收的历史坐标</h3>
+                    <p>CMS（Concurrent Mark Sweep）把老年代的大部分标记和清扫工作与应用线程并发执行，减少长时间停顿；代价包括并发阶段占用 CPU、对浮动垃圾预留空间，以及标记—清除带来的碎片。CMS 在 JDK 9 被废弃，并于 JDK 14 移除。它适合作为理解并发标记、重新标记和碎片问题的历史知识，不应作为现代 JDK 新项目选型。</p>
+
+                    <h3 id="g1">5.4 G1：Region 化、分代、可预测停顿目标</h3>
+                    <p>G1 把堆划分为等大小 Region，Region 在不同阶段可以承担 Eden、Survivor、Old 或 Humongous 等角色。它仍有分代概念，但不要求年轻代和老年代各自是一大片连续空间。G1 会根据历史成本模型选择回收集合，尝试在 <code>-XX:MaxGCPauseMillis</code>目标内优先回收收益更高的 Region；这是努力目标，不是实时保证。</p>
+                    <ul>
+                        <li><strong>Young GC：</strong>暂停应用线程，把选定年轻代 Region 中的存活对象转移到 Survivor 或 Old Region。</li>
+                        <li><strong>并发标记：</strong>与应用并发识别老年代 Region 的存活情况，为后续回收选择提供数据。</li>
+                        <li><strong>Mixed GC：</strong>除年轻代外，加入部分垃圾比例较高的老年代 Region。</li>
+                        <li><strong>Remembered Set：</strong>记录跨 Region 引用相关信息，避免每次年轻代回收都扫描整个堆；维护它本身也有时间和空间成本。</li>
+                    </ul>
+
+                    <figure class="tech-figure">
+                        <svg viewBox="0 0 780 300" role="img" aria-labelledby="g1-title g1-desc">
+                            <title id="g1-title">G1 Region 回收流程</title>
+                            <desc id="g1-desc">堆被划分为多个 Region，年轻代回收选择 Eden 和 Survivor，Mixed GC 再加入部分垃圾较多的 Old Region。</desc>
+                            <text class="svg-label" x="105" y="28">Region 化堆布局</text>
+                            <g class="svg-card--accent"><rect x="24" y="46" width="82" height="54" rx="4"/><text x="65" y="78">Eden</text></g>
+                            <g class="svg-card"><rect x="114" y="46" width="82" height="54" rx="4"/><text x="155" y="78">Old</text></g>
+                            <g class="svg-card"><rect x="204" y="46" width="82" height="54" rx="4"/><text x="245" y="78">Survivor</text></g>
+                            <g class="svg-card--muted"><rect x="294" y="46" width="82" height="54" rx="4"/><text x="335" y="78">Free</text></g>
+                            <g class="svg-card"><rect x="384" y="46" width="82" height="54" rx="4"/><text x="425" y="78">Old</text></g>
+                            <g class="svg-card--accent"><rect x="474" y="46" width="82" height="54" rx="4"/><text x="515" y="78">Eden</text></g>
+                            <g class="svg-card"><rect x="564" y="46" width="82" height="54" rx="4"/><text x="605" y="78">Old</text></g>
+                            <g class="svg-card--muted"><rect x="654" y="46" width="102" height="54" rx="4"/><text class="svg-small" x="705" y="78">Humongous</text></g>
+                            <path class="svg-line" d="M214 126 V163"/><polygon class="svg-arrow-fill" points="214,163 208,153 220,153"/>
+                            <g class="svg-card--accent"><rect x="45" y="177" width="286" height="84" rx="7"/><text x="188" y="205">Young GC Collection Set</text><text class="svg-small" x="188" y="229">Eden + Survivor Region</text><text class="svg-small" x="188" y="246">存活对象并行转移</text></g>
+                            <g class="svg-card"><rect x="449" y="177" width="286" height="84" rx="7"/><text x="592" y="205">Mixed GC Collection Set</text><text class="svg-small" x="592" y="229">年轻代 + 部分 Old Region</text><text class="svg-small" x="592" y="246">优先选择预期回收收益较高区域</text></g>
+                            <path class="svg-line svg-line--dashed" d="M331 219 H449"/><text class="svg-label" x="390" y="208">并发标记结果</text>
+                        </svg>
+                        <figcaption>简化流程图，不等同于某个 JDK 版本的完整 G1 状态机。</figcaption>
+                    </figure>
+
+                    <h3 id="zgc">5.5 ZGC：把大部分昂贵工作移出停顿</h3>
+                    <p>ZGC 面向低延迟场景，把标记、重定位和引用处理中的大量工作与应用并发执行，并通过加载屏障、着色指针 / 元数据位等实现技术协助对象重定位。它仍有短暂的 Stop-The-World 阶段，但设计目标是让停顿对堆大小不敏感。低停顿不等于零成本：并发 GC 线程、屏障和额外内存会消耗资源，必须用真实业务负载验证吞吐与延迟。</p>
+                    <p>版本演进很重要：ZGC 在 JDK 11 以实验特性出现，JDK 15 成为生产特性；JDK 21 提供分代模式，JDK 23 默认使用分代 ZGC，JDK 24 移除非分代模式。讨论 ZGC 参数和内部结构时必须先确认目标 JDK。</p>
+
+                    <h3 id="collector-comparison">5.6 收集器如何选择</h3>
+                    <div class="comparison-table-wrap">
+                        <table class="comparison-table">
+                            <thead><tr><th>收集器</th><th>核心目标</th><th>并发 / 并行特点</th><th>停顿特征</th><th>适用场景与版本注意</th></tr></thead>
+                            <tbody>
+                                <tr><td>Serial</td><td>简单、低额外开销</td><td>单 GC 线程</td><td>回收时 STW</td><td>小堆、简单任务；现代 JDK 仍可用</td></tr>
+                                <tr><td>Parallel</td><td>吞吐量</td><td>多 GC 线程并行回收</td><td>STW，单次停顿可能较长</td><td>批处理、离线计算</td></tr>
+                                <tr><td>CMS</td><td>降低老年代停顿</td><td>大部分标记清扫并发</td><td>仍有初始标记、重新标记等停顿</td><td>历史知识；JDK 9 废弃，JDK 14 移除</td></tr>
+                                <tr><td>G1</td><td>吞吐与可控停顿的平衡</td><td>并行转移、并发标记</td><td>增量选择 Region，尝试满足停顿目标</td><td>通用服务端；JDK 9 起多数服务器配置默认</td></tr>
+                                <tr><td>ZGC</td><td>超低停顿</td><td>大部分阶段与应用并发</td><td>短 STW 阶段，目标与堆大小弱相关</td><td>延迟敏感、大堆；分代模式随 JDK 21—24 演进</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+
+                <section id="gc-events">
+                    <h2>6. Minor、Young、Major、Mixed 与 Full GC</h2>
+                    <p>这些名字经常被混用，但并没有跨所有收集器完全一致的定义。分析日志时应先看收集器、JDK 版本、回收范围和触发原因，而不是只凭“Major GC”三个字判断严重程度。</p>
+                    <ul>
+                        <li><strong>Minor GC / Young GC：</strong>通常指年轻代回收；不同日志和工具使用的名称可能不同。</li>
+                        <li><strong>Major GC：</strong>常被用来表示老年代回收，但有的工具把它近似等同 Full GC，语义最不稳定。</li>
+                        <li><strong>Mixed GC：</strong>G1 的术语，回收年轻代 Region 和一部分老年代 Region，不等于整个堆。</li>
+                        <li><strong>Full GC：</strong>一般表示覆盖整个堆或大部分堆、停顿较重的兜底回收，但具体阶段仍由收集器决定。</li>
+                        <li><strong>Stop-The-World：</strong>应用线程在安全点暂停，GC 线程工作。并发收集器也有短暂 STW 阶段，并不是全程不停应用。</li>
+                    </ul>
+                    <p>典型触发压力包括 Eden / 分配 Region 不足、对象晋升失败或老年代空间紧张、元空间扩容与类卸载压力、显式 <code>System.gc()</code>请求，以及并发回收来不及跟上分配。显式请求只是请求，JVM 参数和收集器可以改变其行为；不要把一次 <code>System.gc()</code>机械等同于必然 Full GC。</p>
+                </section>
+
+                <section id="memory-problems">
+                    <h2>7. 内存溢出与内存泄漏</h2>
+                    <h3 id="oom-vs-leak">7.1 OOM 是结果，泄漏是原因之一</h3>
+                    <p><strong>内存溢出</strong>表示某次内存请求无法满足，是可观察到的失败；<strong>内存泄漏</strong>表示已经没有业务价值的对象仍被意外引用，导致可用内存逐渐减少。泄漏可能最终导致 OOM，但 OOM 也可能来自合理存活数据确实超过容量、瞬时分配峰值、线程过多或堆外内存耗尽。</p>
+
+                    <h3 id="common-errors">7.2 常见错误信号</h3>
+                    <div class="comparison-table-wrap">
+                        <table class="comparison-table">
+                            <thead><tr><th>错误或现象</th><th>通常意味着什么</th><th>排查重点</th></tr></thead>
+                            <tbody>
+                                <tr><td>Java heap space</td><td>堆无法满足对象分配，GC 也回收不足</td><td>存活集、分配速率、缓存与集合、堆上限</td></tr>
+                                <tr><td>GC overhead limit exceeded</td><td>某些 HotSpot 配置下，大量时间用于 GC 却回收很少</td><td>接近耗尽的堆、存活集过大；消息和启用条件依版本 / 收集器而异</td></tr>
+                                <tr><td>Metaspace</td><td>类元数据对应的本地内存不足</td><td>ClassLoader 数量、动态生成类、类卸载、MaxMetaspaceSize</td></tr>
+                                <tr><td>StackOverflowError</td><td>单线程调用深度超过栈容量</td><td>递归终止条件、循环调用、-Xss</td></tr>
+                                <tr><td>Direct buffer memory</td><td>NIO 直接缓冲区等堆外内存分配失败</td><td>直接缓冲区生命周期、上限、进程本地内存；普通 Heap Dump 不直接包含缓冲区载荷</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <h3 id="leak-patterns">7.3 Java 后端常见泄漏模式</h3>
+                    <div class="scenario-list">
+                        <article><span>01</span><div><h3>静态集合持续增长</h3><p>静态字段随类 / ClassLoader 长期存活，元素没有删除边界时会形成稳定的 Root 引用链。</p></div></article>
+                        <article><span>02</span><div><h3>缓存没有容量与淘汰</h3><p>业务缓存如果只有 put 没有上限、TTL 或权重控制，本质上是受请求驱动的无界集合。</p></div></article>
+                        <article><span>03</span><div><h3>ThreadLocal 清理不完整</h3><p>线程池线程生命周期很长；ThreadLocal key 弱引用失效后，value 仍可能滞留在线程的 ThreadLocalMap，直到后续操作触发清理或线程结束。使用后应在 finally 中 remove，但不能把 ThreadLocal 等同于必然泄漏。</p></div></article>
+                        <article><span>04</span><div><h3>监听器与回调未注销</h3><p>发布者长期持有监听器，监听器又闭包捕获业务对象，导致整个对象图无法回收。</p></div></article>
+                        <article><span>05</span><div><h3>资源关闭与内存引用混淆</h3><p>文件、连接等资源未关闭主要造成句柄或连接泄漏；资源包装对象被池或任务引用时，也可能同时形成内存滞留。</p></div></article>
+                        <article><span>06</span><div><h3>队列积压与慢消费者</h3><p>生产速度长期高于消费速度，无界任务队列会保留请求上下文，即使代码没有传统意义的“忘记删除”。</p></div></article>
+                    </div>
+
+                    <h3 id="memory-problem-code">7.4 两个仅用于本地学习的错误示例</h3>
+                    <div class="article-note article-note--warning">
+                        <strong>请勿在生产环境运行</strong>
+                        <p>下面程序会主动耗尽内存或栈。请在独立本地进程中设置很小的资源上限，并确认没有承载其他任务。</p>
+                    </div>
+                    <div class="code-block" data-language="java">
+                        <pre><code>import java.util.ArrayList;
+import java.util.List;
+
+public final class HeapOomDemo {
+    public static void main(String[] args) {
+        List&lt;byte[]&gt; retained = new ArrayList&lt;&gt;();
+        while (true) {
+            retained.add(new byte[1024 * 1024]);
+        }
+    }
+}
+
+// 仅用于本地测试：java -Xms32m -Xmx32m HeapOomDemo</code></pre>
+                    </div>
+                    <div class="code-block" data-language="java">
+                        <pre><code>public final class StackOverflowDemo {
+    private static long depth;
+
+    public static void main(String[] args) {
+        try {
+            recurse();
+        } catch (StackOverflowError error) {
+            System.out.println("depth ≈ " + depth);
+            throw error;
+        }
+    }
+
+    private static void recurse() {
+        depth++;
+        recurse();
+    }
+}
+
+// 仅用于本地测试：java -Xss256k StackOverflowDemo</code></pre>
+                    </div>
+                </section>
+
+                <section id="diagnostics">
+                    <h2>8. JVM 内存问题排查与调优</h2>
+                    <h3 id="jvm-options">8.1 常用参数先解决“可观测”</h3>
+                    <div class="comparison-table-wrap">
+                        <table class="comparison-table">
+                            <thead><tr><th>参数</th><th>作用</th><th>使用提示</th></tr></thead>
+                            <tbody>
+                                <tr><td><code>-Xms</code></td><td>HotSpot 初始堆大小</td><td>与 Xmx 是否设为相同值要结合容器弹性、启动与内存预算决定</td></tr>
+                                <tr><td><code>-Xmx</code></td><td>最大 Java 堆</td><td>容器内还要给 Metaspace、线程栈、代码缓存和直接内存留空间</td></tr>
+                                <tr><td><code>-Xss</code></td><td>每线程栈大小</td><td>调大能容纳更深调用，但会降低同等本地内存下可创建线程数</td></tr>
+                                <tr><td><code>-XX:MaxMetaspaceSize</code></td><td>限制 HotSpot Metaspace</td><td>JDK 8+；过小会增加类卸载压力或触发 Metaspace OOM</td></tr>
+                                <tr><td><code>-XX:+HeapDumpOnOutOfMemoryError</code></td><td>堆相关 OOM 时生成 Heap Dump</td><td>提前配置并验证磁盘容量和写权限</td></tr>
+                                <tr><td><code>-XX:HeapDumpPath=/path</code></td><td>指定 Dump 路径</td><td>容器中要使用持久卷，避免文件随实例消失</td></tr>
+                                <tr><td><code>-Xlog:gc*</code></td><td>统一日志记录 GC 事件</td><td>JDK 9+；JDK 8 常见 <code>-XX:+PrintGCDetails</code>与<code>-Xloggc</code></td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="code-block" data-language="bash">
+                        <pre><code>java \
+  -Xms512m -Xmx512m \
+  -XX:+HeapDumpOnOutOfMemoryError \
+  -XX:HeapDumpPath=/var/log/app/heap.hprof \
+  -Xlog:gc*:file=/var/log/app/gc.log:time,uptime,level,tags \
+  -jar app.jar</code></pre>
+                    </div>
+                    <p>参数名不等于调优方案。先确定延迟、吞吐、资源成本和恢复目标，再根据日志和压测调整。只把 <code>-Xmx</code>调大，可能只是推迟泄漏暴露并让最终 Dump 更难分析。</p>
+
+                    <h3 id="diagnostic-tools">8.2 工具各自回答什么问题</h3>
+                    <div class="comparison-table-wrap">
+                        <table class="comparison-table">
+                            <thead><tr><th>工具</th><th>主要用途</th><th>注意事项</th></tr></thead>
+                            <tbody>
+                                <tr><td>jps</td><td>快速列出本机 JVM 进程</td><td>只是入口，容器与权限环境下结果可能不完整</td></tr>
+                                <tr><td>jstat</td><td>持续观察代容量、利用率与 GC 次数 / 时间</td><td>字段随 JDK 与收集器变化，不能脱离文档硬套</td></tr>
+                                <tr><td>jcmd</td><td>向目标 JVM 请求诊断命令、类直方图、Dump、JFR 等</td><td>现代 JDK 通常优先；先用 <code>jcmd pid help</code>确认支持命令</td></tr>
+                                <tr><td>jmap</td><td>查看堆配置、对象直方图或生成 Dump</td><td>部分操作可能触发较重停顿；生产环境谨慎，优先评估 jcmd</td></tr>
+                                <tr><td>jstack</td><td>抓取线程栈，排查死锁、阻塞和忙线程</td><td>解决的是线程执行问题，不直接解释对象引用链</td></tr>
+                                <tr><td>VisualVM</td><td>图形化监控、采样、线程与堆分析</td><td>远程连接需要正确配置与安全边界</td></tr>
+                                <tr><td>Eclipse MAT</td><td>离线分析 HPROF，计算支配树与泄漏嫌疑</td><td>分析大 Dump 需要足够内存；结论要结合业务语义</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="code-block" data-language="bash">
+                        <pre><code>jcmd &lt;pid&gt; VM.version
+jcmd &lt;pid&gt; GC.class_histogram
+jcmd &lt;pid&gt; GC.heap_dump /path/app.hprof
+jstat -gcutil &lt;pid&gt; 1000
+jstack &lt;pid&gt;</code></pre>
+                    </div>
+
+                    <h3 id="heap-dump">8.3 Heap Dump：从“谁最多”追到“谁在持有”</h3>
+                    <p>Heap Dump 是某一时刻堆中对象与引用关系的快照。OOM 自动 Dump 最接近失败现场；手工 Dump 适合在内存持续增长、Full GC 后占用仍不下降时取证，但生成过程可能造成停顿和大量磁盘 I/O。</p>
+                    <ol>
+                        <li>先看对象直方图和按类聚合的实例数 / 总大小，确认异常增长类型。</li>
+                        <li>查看 MAT Dominator Tree，寻找支配大量对象的集合、缓存或 ClassLoader。</li>
+                        <li>对可疑对象执行 Path to GC Roots，找到让它保持可达的静态字段、线程、监听器或容器。</li>
+                        <li>比较业务预期与对象生命周期，避免把合理的大对象池误判为泄漏。</li>
+                    </ol>
+                    <p><strong>Shallow Heap</strong>是对象自身占用，不含其引用对象；<strong>Retained Heap</strong>近似表示对象不可达后可一并释放的对象图总量。一个很小的 HashMap 对象可能 shallow 很小，却通过条目支配数 GB retained heap。</p>
+
+                    <h3 id="gc-logs">8.4 GC 日志看趋势，不只看单行</h3>
+                    <div class="code-block" data-language="text">
+                        <pre><code>[12.418s][info][gc,start] GC(18) Pause Young (Normal) (G1 Evacuation Pause)
+[12.426s][info][gc,heap ] GC(18) Eden regions: 42-&gt;0(44)
+[12.426s][info][gc,heap ] GC(18) Survivor regions: 5-&gt;6(6)
+[12.426s][info][gc,heap ] GC(18) Old regions: 31-&gt;34
+[12.426s][info][gc      ] GC(18) Pause Young (Normal) 612M-&gt;287M(1024M) 8.1ms</code></pre>
+                    </div>
+                    <p>这段示意日志说明一次 G1 Young GC：暂停约 8.1ms，堆占用从 612MB 降到 287MB，部分 Region 中的存活对象进入 Survivor 或 Old。真正分析时应连续观察：Young GC 间隔是否持续缩短、单次暂停分布是否恶化、回收后基线是否抬升、晋升速度是否异常、并发周期是否来不及完成，以及是否出现 Evacuation Failure 或 Full GC。日志格式和字段需以目标 JDK 为准。</p>
+
+                    <h3 id="simulated-case">8.5 模拟排查案例：Spring Boot 服务运行后内存持续增长</h3>
+                    <div class="article-note">
+                        <strong>模拟排查案例</strong>
+                        <p>以下案例用于展示工程方法，不代表作者在实习或真实生产项目中已经处理过该故障，也不包含虚构的性能数据。</p>
+                    </div>
+                    <figure class="tech-figure">
+                        <svg viewBox="0 0 780 245" role="img" aria-labelledby="triage-title triage-desc">
+                            <title id="triage-title">JVM 内存增长排查流程</title>
+                            <desc id="triage-desc">从监控确认增长，到区分内存区域、查看 GC 日志、获取 Dump、分析引用链、修复并复测。</desc>
+                            <g class="svg-card--accent"><rect x="18" y="44" width="112" height="64" rx="6"/><text x="74" y="70">监控趋势</text><text class="svg-small" x="74" y="90">GC 后基线</text></g>
+                            <path class="svg-line" d="M130 76 H157"/><polygon class="svg-arrow-fill" points="157,76 147,70 147,82"/>
+                            <g class="svg-card"><rect x="158" y="44" width="112" height="64" rx="6"/><text x="214" y="70">确认区域</text><text class="svg-small" x="214" y="90">堆 / 元空间 / 堆外</text></g>
+                            <path class="svg-line" d="M270 76 H297"/><polygon class="svg-arrow-fill" points="297,76 287,70 287,82"/>
+                            <g class="svg-card"><rect x="298" y="44" width="112" height="64" rx="6"/><text x="354" y="70">GC 日志</text><text class="svg-small" x="354" y="90">频率 / 停顿 / 回收量</text></g>
+                            <path class="svg-line" d="M410 76 H437"/><polygon class="svg-arrow-fill" points="437,76 427,70 427,82"/>
+                            <g class="svg-card"><rect x="438" y="44" width="112" height="64" rx="6"/><text x="494" y="70">Heap Dump</text><text class="svg-small" x="494" y="90">现场快照</text></g>
+                            <path class="svg-line" d="M550 76 H577"/><polygon class="svg-arrow-fill" points="577,76 567,70 567,82"/>
+                            <g class="svg-card"><rect x="578" y="44" width="184" height="64" rx="6"/><text x="670" y="70">MAT 引用链</text><text class="svg-small" x="670" y="90">Dominator / GC Roots</text></g>
+                            <path class="svg-line" d="M670 108 V143 H511"/><polygon class="svg-arrow-fill" points="511,143 521,137 521,149"/>
+                            <g class="svg-card--accent"><rect x="354" y="157" width="156" height="64" rx="6"/><text x="432" y="183">修复持有关系</text><text class="svg-small" x="432" y="203">容量 / TTL / remove</text></g>
+                            <path class="svg-line" d="M354 189 H327"/><polygon class="svg-arrow-fill" points="327,189 337,183 337,195"/>
+                            <g class="svg-card"><rect x="143" y="157" width="184" height="64" rx="6"/><text x="235" y="183">压测与长期复测</text><text class="svg-small" x="235" y="203">基线稳定且业务正确</text></g>
+                        </svg>
+                        <figcaption>先分层定位，再抓取证据；不要看到进程 RSS 增长就直接断言“Java 堆泄漏”。</figcaption>
+                    </figure>
+                    <ol>
+                        <li>从监控观察堆已用、进程 RSS、Metaspace、直接内存与线程数，确认增长是否只发生在堆。</li>
+                        <li>观察多次 GC 后的堆基线。如果 Young GC 频繁但能明显回落，可能只是分配率高；Full GC 后基线仍单调上升，更像存活集增长。</li>
+                        <li>结合 GC 日志确认回收类型、频率、停顿和晋升，不先假设收集器“失效”。</li>
+                        <li>在接近异常但仍可控时获取 Heap Dump，同时保留流量、版本、配置和时间点。</li>
+                        <li>MAT 显示某 <code>ConcurrentHashMap</code> retained heap 异常，Path to GC Roots 指向单例缓存 Bean。</li>
+                        <li>检查代码发现缓存 key 包含高基数请求参数，既没有最大容量，也没有过期策略。</li>
+                        <li>修复为有容量和 TTL 的缓存，并评估缓存击穿保护；不要只在 OOM 前调用 <code>clear()</code>掩盖设计问题。</li>
+                        <li>使用相同流量模型复测，对比 GC 后基线、命中率、分配率和尾延迟，确认内存稳定且业务收益仍成立。</li>
+                    </ol>
+                </section>
+
+                <section id="interview">
+                    <h2>9. JVM 内存常见面试问题</h2>
+                    <p class="section-intro">“面试回答”适合直接口述；“原理补充”用于追问时展开。</p>
+                    <div class="qa-list">
+                        <details open><summary><span>01</span>JVM 运行时数据区有哪些？</summary><div><p><strong>面试回答：</strong>规范主要定义程序计数器、Java 虚拟机栈、本地方法栈、堆、方法区和其中的运行时常量池。前三者通常线程私有，堆和方法区线程共享。</p><p><strong>原理补充：</strong>Metaspace 是 HotSpot 对类元数据存储的实现，不应直接当作规范中方法区的同义词。</p></div></details>
+                        <details><summary><span>02</span>JVM 堆和栈有什么区别？</summary><div><p><strong>面试回答：</strong>堆由线程共享，主要保存对象和数组并由 GC 管理；Java 虚拟机栈线程私有，以栈帧支撑方法调用，保存局部变量、操作数栈等，方法结束时帧出栈。</p><p><strong>原理补充：</strong>局部变量里的 reference 不是对象本身。栈过深常见 SOE，堆无法满足分配常见 OOM。</p></div></details>
+                        <details><summary><span>03</span>Java 对象一定分配在堆上吗？</summary><div><p><strong>面试回答：</strong>JVM 规范的逻辑模型中，类实例和数组从堆分配；但 HotSpot JIT 可能通过逃逸分析和标量替换消除实际对象分配。</p><p><strong>原理补充：</strong>不要简单回答“对象在栈上”。优化后可能根本没有完整对象内存布局。</p></div></details>
+                        <details><summary><span>04</span>JVM 中对象是如何创建的？</summary><div><p><strong>面试回答：</strong>大致经过类加载检查、分配内存、零值初始化、设置对象头，再执行实例初始化和构造方法。</p><p><strong>原理补充：</strong>TLAB、CAS 慢路径与分配消除属于 HotSpot 优化，具体过程受收集器和 JIT 影响。</p></div></details>
+                        <details><summary><span>05</span>Java 对象的内存布局是什么？</summary><div><p><strong>面试回答：</strong>HotSpot 普通对象通常由对象头、实例数据和可选的对齐填充组成；数组对象头通常还包含长度。</p><p><strong>原理补充：</strong>对象头含 Mark Word 和 Klass Pointer 等，实际宽度受位数、压缩指针和 JDK 版本影响。</p></div></details>
+                        <details><summary><span>06</span>什么是 GC Roots？</summary><div><p><strong>面试回答：</strong>GC Roots 是可达性分析的起点，例如活动线程栈中的引用、已加载类关联的静态引用、JNI 引用和 JVM 内部特定引用。</p><p><strong>原理补充：</strong>具体 Roots 与 JVM 实现及收集阶段有关，不能只背固定列表。</p></div></details>
+                        <details><summary><span>07</span>JVM 如何判断对象是否可以回收？</summary><div><p><strong>面试回答：</strong>主流 HotSpot 收集器通过可达性分析，从 GC Roots 沿引用链遍历；无法到达的对象才进入回收处理。</p><p><strong>原理补充：</strong>不可达不等于立刻释放，还涉及引用处理、终结机制历史兼容和具体 GC 周期。</p></div></details>
+                        <details><summary><span>08</span>引用计数法为什么难以处理循环引用？</summary><div><p><strong>面试回答：</strong>两个对象互相引用时，即使外部已经无法访问，它们的计数仍大于零，朴素引用计数无法判定为垃圾。</p><p><strong>原理补充：</strong>可达性分析从 Roots 出发，孤立引用环没有 Root 路径，因此可以回收。</p></div></details>
+                        <details><summary><span>09</span>常见垃圾回收算法有哪些？</summary><div><p><strong>面试回答：</strong>常见基础算法是标记—清除、标记—复制和标记—整理。它们在碎片、对象移动成本和预留空间之间做权衡。</p><p><strong>原理补充：</strong>现代收集器通常组合这些思想，并加入分代、并行和并发机制。</p></div></details>
+                        <details><summary><span>10</span>G1 和 ZGC 有什么区别？</summary><div><p><strong>面试回答：</strong>G1 用 Region 化分代堆和增量回收，在吞吐与可控停顿间平衡；ZGC 把更多标记和重定位工作与应用并发，目标是更低停顿，但会付出屏障、并发线程和额外内存成本。</p><p><strong>原理补充：</strong>不能无条件说谁更快。应按 JDK 版本、堆大小、延迟目标和压测数据选型；JDK 24 起 ZGC 只有分代模式。</p></div></details>
+                        <details><summary><span>11</span>什么是 Stop-The-World？</summary><div><p><strong>面试回答：</strong>STW 是 JVM 在安全点暂停应用线程，让 GC 或其他 VM 操作在稳定状态下工作。并发收集器也有短暂 STW 阶段。</p><p><strong>原理补充：</strong>停顿时间不仅取决于堆大小，也受存活对象、Root 扫描、线程数和系统调度影响。</p></div></details>
+                        <details><summary><span>12</span>什么情况下可能发生 Full GC？</summary><div><p><strong>面试回答：</strong>常见原因有老年代或晋升空间不足、并发回收失败、元空间压力、收集器转移失败和显式 GC 请求等，但实际触发条件取决于收集器和 JDK。</p><p><strong>原理补充：</strong>先看日志中的 cause 与 collector，不把所有老年代回收都叫 Full GC。</p></div></details>
+                        <details><summary><span>13</span>内存泄漏和内存溢出有什么区别？</summary><div><p><strong>面试回答：</strong>泄漏是无用对象仍被意外引用，导致内存不能回收；溢出是内存请求最终无法满足。泄漏可能导致 OOM，但合理存活数据过大也会 OOM。</p><p><strong>原理补充：</strong>判断泄漏要比较对象生命周期与业务预期，并分析到 GC Roots 的引用链。</p></div></details>
+                        <details><summary><span>14</span>ThreadLocal 为什么可能导致内存泄漏？</summary><div><p><strong>面试回答：</strong>线程池线程寿命很长，ThreadLocalMap 的 key 是弱引用；key 被回收后 value 仍可能残留，直到后续操作清理或线程结束，所以使用后应在 finally 中 remove。</p><p><strong>原理补充：</strong>ThreadLocal 不是必然泄漏，风险来自长生命周期线程、遗留 value 和不完整清理的组合。</p></div></details>
+                        <details><summary><span>15</span>Java 服务出现 OOM 应该如何排查？</summary><div><p><strong>面试回答：</strong>先确认错误类型和内存区域，保留 GC 日志、监控与 Heap Dump；再看对象直方图、Dominator Tree 和 GC Roots 引用链，结合业务代码定位异常持有，修复后用同负载复测。</p><p><strong>原理补充：</strong>堆外 OOM、线程创建失败和 Metaspace OOM 不能只靠普通 Heap Dump 解释。</p></div></details>
+                        <details><summary><span>16</span>JVM 常见内存参数有哪些？</summary><div><p><strong>面试回答：</strong>常见有 Xms、Xmx、Xss、MaxMetaspaceSize，以及 OOM 自动 Dump 的 HeapDumpOnOutOfMemoryError 和 HeapDumpPath；JDK 9+ 可用 Xlog:gc*记录 GC。</p><p><strong>原理补充：</strong>容器总内存还要覆盖堆外、线程栈、Metaspace、代码缓存和 JVM 自身开销。</p></div></details>
+                        <details><summary><span>17</span>如何判断服务是否存在频繁 GC？</summary><div><p><strong>面试回答：</strong>结合 jstat、监控和 GC 日志观察单位时间 GC 次数、累计停顿、回收前后占用和 GC 后基线。频率高但暂停短、回收有效，不一定是故障。</p><p><strong>原理补充：</strong>重点看分配速率、晋升速率、并发周期能否跟上，以及 Full GC 是否增加。</p></div></details>
+                        <details><summary><span>18</span>什么是元空间？为什么替代永久代？</summary><div><p><strong>面试回答：</strong>Metaspace 是 HotSpot JDK 8 起保存主要类元数据的本地内存实现，替代了固定在 VM 内存管理中的 PermGen，容量管理更灵活，也减少了永久代大小估算问题。</p><p><strong>原理补充：</strong>它仍会耗尽本地内存或受 MaxMetaspaceSize 限制；方法区是规范概念，Metaspace 是实现。</p></div></details>
+                    </div>
+                </section>
+
+                <section id="knowledge-map">
+                    <h2>10. 把知识点串成一条排查链</h2>
+                    <figure class="tech-figure">
+                        <svg viewBox="0 0 780 250" role="img" aria-labelledby="map-title map-desc">
+                            <title id="map-title">JVM 内存知识体系总结</title>
+                            <desc id="map-desc">从运行时数据区到对象生命周期、可达性、收集器，再到监控诊断与工程决策的知识链。</desc>
+                            <g class="svg-card--accent"><rect x="24" y="48" width="130" height="64" rx="7"/><text x="89" y="74">运行时数据区</text><text class="svg-small" x="89" y="94">规范边界</text></g>
+                            <path class="svg-line" d="M154 80 H181"/><polygon class="svg-arrow-fill" points="181,80 171,74 171,86"/>
+                            <g class="svg-card"><rect x="182" y="48" width="130" height="64" rx="7"/><text x="247" y="74">对象生命周期</text><text class="svg-small" x="247" y="94">分配 / 布局 / 访问</text></g>
+                            <path class="svg-line" d="M312 80 H339"/><polygon class="svg-arrow-fill" points="339,80 329,74 329,86"/>
+                            <g class="svg-card"><rect x="340" y="48" width="130" height="64" rx="7"/><text x="405" y="74">可达性分析</text><text class="svg-small" x="405" y="94">对象为何仍存活</text></g>
+                            <path class="svg-line" d="M470 80 H497"/><polygon class="svg-arrow-fill" points="497,80 487,74 487,86"/>
+                            <g class="svg-card"><rect x="498" y="48" width="130" height="64" rx="7"/><text x="563" y="74">垃圾收集器</text><text class="svg-small" x="563" y="94">吞吐 / 延迟 / 空间</text></g>
+                            <path class="svg-line" d="M628 80 H655"/><polygon class="svg-arrow-fill" points="655,80 645,74 645,86"/>
+                            <g class="svg-card--accent"><rect x="656" y="48" width="100" height="64" rx="7"/><text x="706" y="74">诊断</text><text class="svg-small" x="706" y="94">日志 / Dump</text></g>
+                            <path class="svg-line" d="M706 112 V154 H405"/><polygon class="svg-arrow-fill" points="405,154 415,148 415,160"/>
+                            <g class="svg-card--muted"><rect x="224" y="169" width="362" height="56" rx="7"/><text x="405" y="193">用业务生命周期解释对象引用链</text><text class="svg-small" x="405" y="211">修复持有关系，再以相同负载验证内存、GC 与延迟</text></g>
+                        </svg>
+                        <figcaption>调优不是背参数：从现象到区域，从区域到对象，从对象到引用链，最后回到业务设计。</figcaption>
+                    </figure>
+                    <p>真正有用的 JVM 内存知识，不是把“堆、栈、方法区”背成三个名词，而是建立因果关系：线程调用如何形成栈帧，对象怎样被分配，为什么某条引用链让对象继续存活，收集器在什么约束下回收，以及日志与 Dump 如何验证判断。</p>
+                    <p>遇到问题时先保留证据，再讨论调参。容量不足可以扩容，分配过快可以优化对象模型，引用泄漏必须修复生命周期，延迟目标则需要在真实负载下选择和验证收集器。把问题放回正确层次，通常比寻找一个“万能 JVM 参数”更有效。</p>
+
+                    <h3 id="official-references">官方资料与版本参考</h3>
+                    <ul>
+                        <li><a href="https://docs.oracle.com/javase/specs/jvms/se25/html/jvms-2.html" target="_blank" rel="noreferrer">Java Virtual Machine Specification, Chapter 2</a>：运行时数据区、栈帧与对象表示的规范边界。</li>
+                        <li><a href="https://docs.oracle.com/en/java/javase/25/gctuning/" target="_blank" rel="noreferrer">HotSpot Virtual Machine Garbage Collection Tuning Guide</a>：Serial、Parallel、G1、ZGC 与日志调优。</li>
+                        <li><a href="https://openjdk.org/jeps/122" target="_blank" rel="noreferrer">JEP 122</a>、<a href="https://openjdk.org/jeps/363" target="_blank" rel="noreferrer">JEP 363</a>：移除永久代与 CMS 的版本背景。</li>
+                        <li><a href="https://openjdk.org/jeps/439" target="_blank" rel="noreferrer">JEP 439</a>、<a href="https://openjdk.org/jeps/474" target="_blank" rel="noreferrer">JEP 474</a>、<a href="https://openjdk.org/jeps/490" target="_blank" rel="noreferrer">JEP 490</a>：分代 ZGC 从引入、默认到移除非分代模式。</li>
+                    </ul>
+                </section>
+            </article>
+
+            <footer class="article-footer">
+                <div>
+                    <strong>上一篇</strong>
+                    <a href="/blog/java-locks.html">深入理解 Java 锁机制</a>
+                </div>
+                <a href="/blog/index.html">返回博客列表 <span aria-hidden="true">→</span></a>
+            </footer>
+        </main>
+
+        <aside class="article-aside" aria-label="文章摘要">
+            <div class="aside-card">
+                <span class="aside-label">本文主线</span>
+                <p>运行时数据区</p><i>↓</i>
+                <p>对象生命周期</p><i>↓</i>
+                <p>垃圾回收</p><i>↓</i>
+                <p>诊断与调优</p>
+            </div>
+            <div class="aside-card aside-card--tags">
+                <span class="aside-label">标签</span>
+                <div><span>Java</span><span>JVM</span><span>内存管理</span><span>垃圾回收</span><span>GC</span><span>性能调优</span></div>
+            </div>
+        </aside>
+    </div>
+
+    <button class="back-to-top" type="button" aria-label="返回顶部" title="返回顶部">↑</button>
+</body>
+</html>
