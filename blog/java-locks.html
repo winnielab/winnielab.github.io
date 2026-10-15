@@ -101,7 +101,7 @@
                         <table class="comparison-table">
                             <thead><tr><th>维度</th><th>含义</th><th>Java 中的典型例子</th></tr></thead>
                             <tbody>
-                                <tr><td>悲观 / 乐观</td><td>先假设冲突会发生并加锁；或先尝试更新，冲突后重试</td><td><code>synchronized</code>、<code>Lock</code> / CAS、原子类</td></tr>
+                                <tr><td>悲观锁 / 乐观锁</td><td>悲观锁先假设冲突会发生并加锁；乐观锁先尝试更新，冲突后重试</td><td><code>synchronized</code>、<code>Lock</code> / CAS、原子类</td></tr>
                                 <tr><td>互斥 / 读写</td><td>同一时刻只允许一个持有者；或允许多个读者并发</td><td><code>ReentrantLock</code> / <code>ReentrantReadWriteLock</code></td></tr>
                                 <tr><td>可重入 / 不可重入</td><td>同一线程能否重复获取同一把锁</td><td><code>synchronized</code>、<code>ReentrantLock</code> 都可重入</td></tr>
                                 <tr><td>公平 / 非公平</td><td>是否倾向按等待先后授予锁</td><td><code>ReentrantLock(true)</code> / 默认非公平锁</td></tr>
@@ -117,6 +117,7 @@
                     <p><code>synchronized</code>最重要的优点不是语法短，而是锁的获取与释放由 JVM 保证。只要所有线程都使用<strong>同一个监视器对象</strong>保护同一份状态，临界区就能获得互斥与内存可见性。</p>
 
                     <h3 id="synchronized-forms">三种写法，三种锁对象</h3>
+                    <p>同步实例方法锁定当前对象 <code>this</code>，静态同步方法锁定对应的 <code>Class</code> 对象，同步代码块则锁定括号中显式指定的对象。</p>
                     <div class="code-block" data-language="java">
                         <pre><code>public class AccountService {
     private final Object balanceLock = new Object();
