@@ -996,23 +996,19 @@ td code {
     border-left: 4px solid var(--accent);
     border-radius: 5px;
     background: var(--surface-raised);
+    color: inherit;
+    text-decoration: none;
     transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
 }
 
 .post-card:hover {
     border-color: color-mix(in srgb, var(--accent) 65%, var(--line));
     box-shadow: var(--shadow);
+    text-decoration: none;
     transform: translateY(-2px);
 }
 
-.post-card__link {
-    position: absolute;
-    z-index: 1;
-    inset: 0;
-    border-radius: inherit;
-}
-
-.post-card__link:focus-visible {
+.post-card:focus-visible {
     outline: 3px solid var(--sidebar-deep);
     outline-offset: 3px;
 }

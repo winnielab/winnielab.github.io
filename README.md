@@ -1,22 +1,14 @@
-# Personal Academic Homepage
+# Young's Homepage
 
-A lightweight, responsive academic homepage for GitHub Pages.
+A lightweight personal homepage and technical blog hosted with GitHub Pages.
 
-## Customize
+The site currently includes a project overview and Chinese Java backend notes. Blog articles focus on core principles, practical code, engineering choices, and interview preparation.
 
-Edit `index.html` and replace these placeholders before publishing:
+[Visit the homepage](https://winnielab.github.io/) · [Browse the blog](https://winnielab.github.io/blog/index.html)
 
-- `Young` — your preferred English name
-- The `Agent Project` title and description — your project's public information
+## Local preview
 
-The Research Interests section and its navigation link are currently commented
-out in `index.html`. Remove the surrounding HTML comments when you are ready to
-publish that section.
-
-To use a real portrait, add `avatar.jpg` to the project root and replace the
-placeholder block using the comment already included in `index.html`.
-
-The site has no build step or third-party dependencies. Open `index.html` directly, or run a local static server:
+The project uses plain HTML, CSS, and JavaScript with no build step or third-party dependencies:
 
 ```bash
 python3 -m http.server 8000
