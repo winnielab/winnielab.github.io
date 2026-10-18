@@ -1,0 +1,608 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="auto">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="深入理解 Java 集合框架：从 List、Set、Map、Queue 的底层数据结构，到并发集合、工程选型与高频面试题。">
+    <meta name="theme-color" content="#7fc5d5">
+    <title>深入理解 Java 集合框架：从底层数据结构到面试实战 · Young</title>
+    <link rel="stylesheet" href="blog.css?v=20261015">
+    <script src="blog.js?v=20261015-2" defer></script>
+</head>
+<body>
+    <div class="reading-progress" aria-hidden="true"><span></span></div>
+
+    <header class="site-header">
+        <a class="brand" href="/index.html">Young</a>
+        <nav aria-label="博客导航">
+            <a href="/index.html#about">Home</a>
+            <a href="/index.html#projects">Projects</a>
+            <a href="/blog/index.html" aria-current="page">Blog</a>
+        </nav>
+        <button class="theme-toggle" type="button" aria-label="切换深色模式" title="切换深色模式">
+            <span class="theme-icon" aria-hidden="true">◐</span>
+        </button>
+    </header>
+
+    <div class="article-shell">
+        <aside class="toc-panel" aria-label="文章目录">
+            <a class="toc-back" href="/blog/index.html"><span aria-hidden="true">←</span> 博客首页</a>
+            <p class="toc-title">目录</p>
+            <nav id="toc"></nav>
+        </aside>
+
+        <main class="article-main">
+            <header class="article-header">
+                <p class="article-kicker">Java / 集合框架</p>
+                <h1>深入理解 Java 集合框架：<br><span>从底层数据结构到面试实战</span></h1>
+                <p class="article-lead">从接口语义和数据结构出发，拆解 ArrayList、HashMap、TreeMap、Queue 与并发集合，再把常见坑、工程选型和面试表达串成一套完整知识体系。</p>
+                <div class="article-meta">
+                    <span>发布于 2026-10-18</span>
+                    <span>约 42 分钟</span>
+                    <span>Java · Collections · List · Map · Set · JUC</span>
+                </div>
+            </header>
+
+            <article>
+                <div class="article-note article-note--scope">
+                    <strong>本文的版本边界</strong>
+                    <p>接口行为以 Java SE 25 API 为主要参考；HashMap 树化阈值、ArrayList 扩容等源码细节以当前 OpenJDK 实现为例。实现细节可能随 JDK 版本变化，不应当作 Collection 或 Map 接口的永久契约。</p>
+                </div>
+
+                <section id="overview">
+                    <h2>1. 集合框架到底在解决什么问题</h2>
+                    <p>数组能保存一组同类型数据，但长度固定，插入、删除、查找和并发控制都需要自行处理。Java 集合框架把常见数据结构抽象为接口，用统一方式表达“是否有序、能否重复、按位置还是按键访问、是否需要并发”等语义，并提供经过长期验证的实现。</p>
+                    <p>面试中只背“ArrayList 底层是数组，LinkedList 底层是链表”远远不够。真正重要的是：业务操作模式是什么，接口承诺了什么复杂度和顺序语义，实现为了这些承诺付出了什么空间、复制、哈希或同步成本。</p>
+
+                    <h3 id="collection-vs-collections">1.1 Collection、Collections 与 Map</h3>
+                    <ul>
+                        <li><strong>Collection</strong>是集合层次的根接口，表示一组元素；List、Set、Queue 都由它扩展。</li>
+                        <li><strong>Collections</strong>是工具类，提供排序、查找、不可修改视图、同步包装等静态方法。</li>
+                        <li><strong>Map</strong>表示键值映射，不继承 Collection；它通过 <code>keySet()</code>、<code>values()</code>和<code>entrySet()</code>暴露集合视图。</li>
+                    </ul>
+
+                    <figure class="tech-figure">
+                        <svg viewBox="0 0 780 420" role="img" aria-labelledby="hierarchy-title hierarchy-desc">
+                            <title id="hierarchy-title">Java 集合框架核心接口层次</title>
+                            <desc id="hierarchy-desc">Collection 分为 List、Set、Queue，Map 是独立层次；JDK 21 增加 SequencedCollection、SequencedSet 与 SequencedMap 描述明确的相遇顺序。</desc>
+                            <g class="svg-card--accent"><rect x="285" y="18" width="210" height="54" rx="7"/><text x="390" y="51">Iterable</text></g>
+                            <path class="svg-line" d="M390 72 V98"/><polygon class="svg-arrow-fill" points="390,98 384,88 396,88"/>
+                            <g class="svg-card--accent"><rect x="285" y="99" width="210" height="54" rx="7"/><text x="390" y="132">Collection</text></g>
+                            <path class="svg-line" d="M390 153 V180 H134 V199"/><path class="svg-line" d="M390 180 H390 V199"/><path class="svg-line" d="M390 180 H646 V199"/>
+                            <g class="svg-card"><rect x="34" y="200" width="200" height="62" rx="7"/><text x="134" y="226">List</text><text class="svg-small" x="134" y="246">有位置、可重复、有相遇顺序</text></g>
+                            <g class="svg-card"><rect x="290" y="200" width="200" height="62" rx="7"/><text x="390" y="226">Set</text><text class="svg-small" x="390" y="246">元素唯一，顺序由实现决定</text></g>
+                            <g class="svg-card"><rect x="546" y="200" width="200" height="62" rx="7"/><text x="646" y="226">Queue / Deque</text><text class="svg-small" x="646" y="246">队首 / 双端操作</text></g>
+                            <g class="svg-card--muted"><rect x="34" y="290" width="200" height="80" rx="7"/><text x="134" y="315">ArrayList</text><text class="svg-small" x="134" y="335">LinkedList</text><text class="svg-small" x="134" y="353">CopyOnWriteArrayList</text></g>
+                            <g class="svg-card--muted"><rect x="290" y="290" width="200" height="80" rx="7"/><text x="390" y="315">HashSet / LinkedHashSet</text><text class="svg-small" x="390" y="335">TreeSet</text><text class="svg-small" x="390" y="353">ConcurrentSkipListSet</text></g>
+                            <g class="svg-card--muted"><rect x="546" y="290" width="200" height="80" rx="7"/><text x="646" y="315">ArrayDeque</text><text class="svg-small" x="646" y="335">PriorityQueue</text><text class="svg-small" x="646" y="353">BlockingQueue</text></g>
+                            <g class="svg-card--accent"><rect x="20" y="18" width="200" height="54" rx="7"/><text x="120" y="51">Map（独立层次）</text></g>
+                            <g class="svg-card--muted"><rect x="20" y="99" width="200" height="92" rx="7"/><text x="120" y="124">HashMap / LinkedHashMap</text><text class="svg-small" x="120" y="146">TreeMap</text><text class="svg-small" x="120" y="166">ConcurrentHashMap</text></g>
+                            <text class="svg-label" x="390" y="400">JDK 21+：有明确相遇顺序的类型统一接入 SequencedCollection / SequencedMap 能力</text>
+                        </svg>
+                        <figcaption>核心层次概念图；省略了抽象类、部分并发接口和专用集合。</figcaption>
+                    </figure>
+
+                    <h3 id="sequenced-collections">1.2 JDK 21 的 Sequenced Collections</h3>
+                    <p>JDK 21 引入 <code>SequencedCollection</code>、<code>SequencedSet</code>和<code>SequencedMap</code>，为“存在明确相遇顺序”的集合统一提供首尾访问和反向视图，例如 <code>getFirst()</code>、<code>getLast()</code>、<code>reversed()</code>。List、Deque、LinkedHashSet、LinkedHashMap、TreeMap 等由此拥有更统一的顺序 API。</p>
+                    <div class="code-block" data-language="java">
+                        <pre><code>import java.util.ArrayList;
+import java.util.List;
+
+public final class SequencedDemo {
+    public static void main(String[] args) {
+        List&lt;String&gt; names = new ArrayList&lt;&gt;(List.of("Ada", "Bob", "Cora"));
+
+        System.out.println(names.getFirst());       // Ada，JDK 21+
+        System.out.println(names.getLast());        // Cora
+        System.out.println(names.reversed());       // [Cora, Bob, Ada]
+
+        names.reversed().removeFirst();             // 视图写穿到底层列表，删除 Cora
+        System.out.println(names);                  // [Ada, Bob]
+    }
+}</code></pre>
+                    </div>
+                    <p><code>reversed()</code>通常返回反向视图而不是独立副本，修改是否写穿以及操作是否受支持，要看具体实现和接口契约。</p>
+                </section>
+
+                <section id="contracts">
+                    <h2>2. 先理解集合的共同契约</h2>
+                    <h3 id="generics">2.1 泛型：在编译期约束元素类型</h3>
+                    <p>泛型让 <code>List&lt;User&gt;</code>只能按 User 语义读写，减少运行期类型转换错误。集合 API 中常见的 <code>? extends T</code>表示主要作为 T 的生产者读取，<code>? super T</code>表示可以安全写入 T，即常说的 PECS：Producer Extends，Consumer Super。</p>
+
+                    <h3 id="equals-hashcode">2.2 equals 与 hashCode 决定“相等”</h3>
+                    <p>List 的查找、Set 的去重、Map 的键匹配最终都依赖相等性。对于 HashSet 和 HashMap，两个对象若 <code>equals</code>相等，就必须拥有相同 <code>hashCode</code>；否则相等对象可能进入不同桶，导致查找失败或出现逻辑重复。</p>
+                    <div class="code-block" data-language="java">
+                        <pre><code>import java.util.HashMap;
+import java.util.Map;
+
+public final class KeyContractDemo {
+    record UserKey(long tenantId, long userId) {}
+
+    public static void main(String[] args) {
+        Map&lt;UserKey, String&gt; users = new HashMap&lt;&gt;();
+        users.put(new UserKey(7, 42), "Young");
+
+        // record 根据组件生成一致的 equals 与 hashCode
+        System.out.println(users.get(new UserKey(7, 42))); // Young
+    }
+}</code></pre>
+                    </div>
+                    <p>作为哈希键的字段最好不可变。键放入 Map 后再修改参与 <code>equals/hashCode</code>的字段，它所在桶不会自动迁移，之后即使拿同一个对象查询，也可能找不到。</p>
+
+                    <h3 id="ordering">2.3 有序、排序与相遇顺序不是一回事</h3>
+                    <ul>
+                        <li><strong>有索引顺序：</strong>List 按位置保存元素。</li>
+                        <li><strong>插入顺序：</strong>LinkedHashSet、默认 LinkedHashMap 迭代时保持插入顺序。</li>
+                        <li><strong>访问顺序：</strong>LinkedHashMap 可按最近访问顺序维护链表，适合构建 LRU。</li>
+                        <li><strong>排序顺序：</strong>TreeSet、TreeMap 按自然顺序或 Comparator 排序。</li>
+                        <li><strong>未指定顺序：</strong>HashMap、HashSet 不承诺迭代顺序，即使某次运行看起来稳定也不能依赖。</li>
+                    </ul>
+                    <p>排序集合的 Comparator 最好与 <code>equals</code>一致。如果比较结果为 0，但 <code>equals</code>为 false，TreeSet 仍会把两个元素当作同一个排序位置，这往往是面试中的追问点。</p>
+
+                    <h3 id="fail-fast">2.4 fail-fast 不是线程安全机制</h3>
+                    <p>ArrayList、HashMap 等迭代器通常维护结构修改计数。迭代期间如果集合被绕过迭代器结构性修改，可能抛出 <code>ConcurrentModificationException</code>。但官方契约明确说明这是<strong>尽力而为</strong>的错误检测，不能保证每次都抛，也不能用异常代替同步。</p>
+                    <div class="code-block" data-language="java">
+                        <pre><code>import java.util.ArrayList;
+import java.util.List;
+
+public final class SafeRemovalDemo {
+    public static void main(String[] args) {
+        List&lt;Integer&gt; values = new ArrayList&lt;&gt;(List.of(1, 2, 3, 4));
+
+        values.removeIf(value -&gt; value % 2 == 0);
+        // 或使用 Iterator.remove()，不要在增强 for 中直接 values.remove(...)
+
+        System.out.println(values); // [1, 3]
+    }
+}</code></pre>
+                    </div>
+                </section>
+
+                <section id="list">
+                    <h2>3. List：位置、顺序与重复元素</h2>
+                    <h3 id="array-list">3.1 ArrayList：连续引用数组</h3>
+                    <p>ArrayList 使用可扩容数组保存元素引用。按索引读取只需计算偏移，通常是 O(1)；尾部追加是摊销 O(1)；中间插入或删除需要移动后续元素，通常是 O(n)。连续布局还具有较好的 CPU 缓存局部性，所以它常是普通 List 的默认选择。</p>
+                    <p>容量与 <code>size</code>不同：size 是已有元素数，capacity 是底层数组可容纳的引用数。扩容要申请新数组并复制旧元素。API 只保证追加的摊销常数复杂度，并不把具体增长倍率作为契约；当前 OpenJDK 常采用约 1.5 倍增长。已知数据规模时传入初始容量或调用 <code>ensureCapacity</code>可减少复制。</p>
+
+                    <h3 id="linked-list">3.2 LinkedList：双向链表不等于更快</h3>
+                    <p>LinkedList 的每个节点保存元素及前后节点引用。已持有节点位置时，链接和删除可以是 O(1)；但公开 API 常先按索引从头或尾遍历定位节点，因此 <code>get(index)</code>和按位置插入总体仍是 O(n)。每个节点有额外对象与引用开销，内存局部性也差。</p>
+
+                    <figure class="tech-figure">
+                        <svg viewBox="0 0 780 310" role="img" aria-labelledby="list-layout-title list-layout-desc">
+                            <title id="list-layout-title">ArrayList 与 LinkedList 内存布局对比</title>
+                            <desc id="list-layout-desc">ArrayList 的引用位于连续数组，LinkedList 的节点分散并通过前后指针连接。</desc>
+                            <text class="svg-label" x="75" y="30">ArrayList：连续引用槽</text>
+                            <g class="svg-card--accent"><rect x="24" y="48" width="732" height="86" rx="8"/><text x="90" y="77">elementData</text></g>
+                            <g class="svg-card"><rect x="148" y="67" width="86" height="46"/><text class="svg-small" x="191" y="95">ref A</text></g>
+                            <g class="svg-card"><rect x="234" y="67" width="86" height="46"/><text class="svg-small" x="277" y="95">ref B</text></g>
+                            <g class="svg-card"><rect x="320" y="67" width="86" height="46"/><text class="svg-small" x="363" y="95">ref C</text></g>
+                            <g class="svg-card--muted"><rect x="406" y="67" width="86" height="46"/><text class="svg-small" x="449" y="95">null</text></g>
+                            <g class="svg-card--muted"><rect x="492" y="67" width="86" height="46"/><text class="svg-small" x="535" y="95">null</text></g>
+                            <text class="svg-label" x="105" y="174">LinkedList：节点对象可分散在堆中</text>
+                            <g class="svg-card"><rect x="40" y="198" width="174" height="72" rx="7"/><text x="127" y="222">Node A</text><text class="svg-small" x="127" y="246">prev | item | next</text></g>
+                            <path class="svg-line" d="M214 234 H300"/><path class="svg-line" d="M300 250 H214"/>
+                            <g class="svg-card"><rect x="301" y="198" width="174" height="72" rx="7"/><text x="388" y="222">Node B</text><text class="svg-small" x="388" y="246">prev | item | next</text></g>
+                            <path class="svg-line" d="M475 234 H561"/><path class="svg-line" d="M561 250 H475"/>
+                            <g class="svg-card"><rect x="562" y="198" width="174" height="72" rx="7"/><text x="649" y="222">Node C</text><text class="svg-small" x="649" y="246">prev | item | next</text></g>
+                        </svg>
+                        <figcaption>集合内部也属于堆对象图；节点、数组和元素的内存影响可结合上一篇<a href="/blog/jvm-memory-management.html#object-layout">JVM 对象布局</a>理解。</figcaption>
+                    </figure>
+
+                    <div class="comparison-table-wrap">
+                        <table class="comparison-table">
+                            <thead><tr><th>操作</th><th>ArrayList</th><th>LinkedList</th><th>判断重点</th></tr></thead>
+                            <tbody>
+                                <tr><td>按索引访问</td><td>O(1)</td><td>O(n)</td><td>随机访问优先 ArrayList</td></tr>
+                                <tr><td>尾部追加</td><td>摊销 O(1)，偶尔扩容复制</td><td>O(1)</td><td>ArrayList 通常常数更低</td></tr>
+                                <tr><td>头部插入</td><td>O(n) 移动</td><td>O(1)</td><td>频繁双端操作优先 ArrayDeque</td></tr>
+                                <tr><td>中间插入</td><td>定位 O(1)，移动 O(n)</td><td>定位 O(n)，链接 O(1)</td><td>只说 LinkedList O(1) 是忽略了定位</td></tr>
+                                <tr><td>内存局部性</td><td>较好</td><td>较差，节点开销更大</td><td>真实性能需基准测试</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <h3 id="legacy-list">3.3 Vector、Stack 与 CopyOnWriteArrayList</h3>
+                    <p><code>Vector</code>和<code>Stack</code>是早期同步容器，新代码通常不以它们为首选。栈语义优先用 <code>Deque</code>与<code>ArrayDeque</code>。<code>CopyOnWriteArrayList</code>每次写操作复制整个数组，迭代器读取创建时的快照，适合读远多于写、元素不多且需要稳定遍历的监听器列表；写频繁或元素很大时成本会非常高。</p>
+                </section>
+
+                <section id="set">
+                    <h2>4. Set：唯一性由什么决定</h2>
+                    <h3 id="hash-set">4.1 HashSet 与 LinkedHashSet</h3>
+                    <p>HashSet 本质上借助 HashMap 的键实现去重，元素作为 key，value 使用内部占位对象。因此它的相等性、哈希分布、平均复杂度和扩容行为与 HashMap 紧密相关。它允许一个 null 元素，但不承诺迭代顺序。</p>
+                    <p>LinkedHashSet 在哈希结构之外维护相遇顺序，通常保持插入顺序，代价是额外链接和内存。需要“唯一且保持输入顺序”时，它比“HashSet 去重后再排序”更直接。</p>
+
+                    <h3 id="tree-set">4.2 TreeSet 与排序一致性</h3>
+                    <p>TreeSet 通常由 TreeMap 支撑，按自然顺序或 Comparator 维护有序集合，增删查通常是 O(log n)。它判断重复主要依据比较结果是否为 0，而不是再调用 <code>equals</code>。因此比较器要构成稳定的全序，最好与 equals 一致。</p>
+
+                    <h3 id="set-selection">4.3 三种 Set 的选择</h3>
+                    <div class="concept-grid">
+                        <article class="concept-card"><span class="concept-index">01</span><h4>HashSet</h4><p>只关心唯一性与平均 O(1) 查找，不依赖迭代顺序。</p></article>
+                        <article class="concept-card"><span class="concept-index">02</span><h4>LinkedHashSet</h4><p>唯一性之外，还要保留插入顺序或使用 JDK 21+ 首尾操作。</p></article>
+                        <article class="concept-card"><span class="concept-index">03</span><h4>TreeSet</h4><p>需要排序、范围查询、最小值、最大值或相邻元素导航。</p></article>
+                    </div>
+                </section>
+
+                <section id="map">
+                    <h2>5. Map：面试最常追问的集合</h2>
+                    <h3 id="hash-map">5.1 HashMap 的 put 与 get</h3>
+                    <p>HashMap 用桶数组保存映射。访问时先对 key 的 hashCode 做扰动，结合表长计算桶位置；桶为空则直接插入，桶中已有节点则比较哈希与 key 相等性。冲突少时，<code>get/put</code>平均接近 O(1)；极端冲突、恶意哈希或频繁扩容都会改变实际成本。</p>
+
+                    <figure class="tech-figure">
+                        <svg viewBox="0 0 780 320" role="img" aria-labelledby="hashmap-flow-title hashmap-flow-desc">
+                            <title id="hashmap-flow-title">HashMap put 简化流程</title>
+                            <desc id="hashmap-flow-desc">从计算哈希与桶索引开始，判断桶是否为空、键是否已存在、冲突链是否满足树化条件，最后检查扩容。</desc>
+                            <g class="svg-card--accent"><rect x="20" y="28" width="140" height="54" rx="7"/><text x="90" y="54">put(key, value)</text></g>
+                            <path class="svg-line" d="M160 55 H188"/><polygon class="svg-arrow-fill" points="188,55 178,49 178,61"/>
+                            <g class="svg-card"><rect x="189" y="28" width="150" height="54" rx="7"/><text x="264" y="51">hash + 计算桶</text><text class="svg-small" x="264" y="68">table index</text></g>
+                            <path class="svg-line" d="M339 55 H367"/><polygon class="svg-arrow-fill" points="367,55 357,49 357,61"/>
+                            <g class="svg-card"><rect x="368" y="28" width="150" height="54" rx="7"/><text x="443" y="51">桶是否为空？</text><text class="svg-small" x="443" y="68">是：直接放入节点</text></g>
+                            <path class="svg-line" d="M518 55 H546"/><polygon class="svg-arrow-fill" points="546,55 536,49 536,61"/>
+                            <g class="svg-card"><rect x="547" y="28" width="210" height="54" rx="7"/><text x="652" y="51">key 是否已存在？</text><text class="svg-small" x="652" y="68">是：按 API 语义更新 value</text></g>
+                            <path class="svg-line" d="M652 82 V126"/><polygon class="svg-arrow-fill" points="652,126 646,116 658,116"/>
+                            <g class="svg-card--accent"><rect x="520" y="127" width="237" height="70" rx="7"/><text x="638" y="153">处理哈希冲突</text><text class="svg-small" x="638" y="173">链表遍历或红黑树查找</text></g>
+                            <path class="svg-line" d="M520 162 H444"/><polygon class="svg-arrow-fill" points="444,162 454,156 454,168"/>
+                            <g class="svg-card"><rect x="245" y="127" width="198" height="70" rx="7"/><text x="344" y="153">是否满足树化条件？</text><text class="svg-small" x="344" y="173">否则优先扩容或保持链表</text></g>
+                            <path class="svg-line" d="M344 197 V235"/><polygon class="svg-arrow-fill" points="344,235 338,225 350,225"/>
+                            <g class="svg-card"><rect x="245" y="236" width="198" height="58" rx="7"/><text x="344" y="261">size 超过 threshold？</text><text class="svg-small" x="344" y="279">触发 resize</text></g>
+                            <path class="svg-line" d="M245 265 H169"/><polygon class="svg-arrow-fill" points="169,265 179,259 179,271"/>
+                            <g class="svg-card--muted"><rect x="20" y="236" width="148" height="58" rx="7"/><text x="94" y="261">完成插入</text><text class="svg-small" x="94" y="279">modCount / size</text></g>
+                        </svg>
+                        <figcaption>概念流程，不等同于逐行源码。树化、扩容与节点类型属于具体 OpenJDK 实现。</figcaption>
+                    </figure>
+
+                    <h3 id="hashmap-treeify">5.2 链表何时树化</h3>
+                    <p>从 JDK 8 起，OpenJDK HashMap 在严重冲突时可以把桶内链表转换为红黑树，降低最坏查找成本。当前实现常见常量为：树化阈值 8、反树化参考阈值 6、允许树化的最小表容量 64。达到 8 个节点并不必然立刻树化；表容量不足时通常优先扩容。</p>
+                    <div class="article-note article-note--warning">
+                        <strong>不要把 8、6、64 当作 Map 接口契约</strong>
+                        <p>这些数字来自当前 OpenJDK HashMap 源码，是常见面试考点，但可以随实现变化。业务代码不应依赖桶类型或树化阈值。</p>
+                    </div>
+
+                    <h3 id="hashmap-resize">5.3 容量、负载因子与扩容</h3>
+                    <p>默认 HashMap 常使用 0.75 负载因子，在时间与空间之间折中。元素数超过 <code>capacity × loadFactor</code>附近的阈值后扩容。当前实现通常保持容量为 2 的幂，使索引计算与扩容拆分更高效。已知预计条目数时应合理初始化容量，避免多次 resize；也不要盲目给出巨大容量，因为遍历成本和内存占用都受桶数组大小影响。</p>
+                    <p>HashMap 允许一个 null key 和多个 null value，所以 <code>get(key) == null</code>无法区分“没有映射”和“映射值就是 null”，需要时使用 <code>containsKey</code>。</p>
+
+                    <h3 id="mutable-key">5.4 可变键为什么危险</h3>
+                    <div class="code-block" data-language="java">
+                        <pre><code>import java.util.HashMap;
+import java.util.Map;
+import java.util.Objects;
+
+public final class MutableKeyDemo {
+    static final class Key {
+        private String code;
+
+        Key(String code) { this.code = code; }
+        void setCode(String code) { this.code = code; }
+
+        @Override public boolean equals(Object other) {
+            return other instanceof Key key &amp;&amp; Objects.equals(code, key.code);
+        }
+
+        @Override public int hashCode() { return Objects.hash(code); }
+    }
+
+    public static void main(String[] args) {
+        Map&lt;Key, String&gt; map = new HashMap&lt;&gt;();
+        Key key = new Key("A");
+        map.put(key, "value");
+
+        key.setCode("B");
+        System.out.println(map.get(key)); // 很可能是 null：桶位置已与新 hash 不匹配
+    }
+}</code></pre>
+                    </div>
+
+                    <h3 id="linked-hash-map">5.5 LinkedHashMap 与 LRU</h3>
+                    <p>LinkedHashMap 在 HashMap 节点之外维护双向顺序链。默认按插入顺序；构造时启用 access-order 后，读取也会把条目移动到顺序末尾，可结合 <code>removeEldestEntry</code>实现简单的有界 LRU。它不是线程安全缓存，也不提供 TTL、权重、统计或防击穿能力，生产缓存通常优先使用成熟缓存库。</p>
+                    <div class="code-block" data-language="java">
+                        <pre><code>import java.util.LinkedHashMap;
+import java.util.Map;
+
+public final class LruCache&lt;K, V&gt; extends LinkedHashMap&lt;K, V&gt; {
+    private final int capacity;
+
+    public LruCache(int capacity) {
+        super(capacity, 0.75f, true); // true：访问顺序
+        this.capacity = capacity;
+    }
+
+    @Override
+    protected boolean removeEldestEntry(Map.Entry&lt;K, V&gt; eldest) {
+        return size() &gt; capacity;
+    }
+}</code></pre>
+                    </div>
+
+                    <h3 id="tree-map">5.6 TreeMap 与范围查询</h3>
+                    <p>TreeMap 通常使用红黑树维护按 key 的全序，<code>get/put/remove</code>是 O(log n)，并提供 <code>floorKey</code>、<code>ceilingKey</code>、<code>subMap</code>等导航与范围视图。自然排序下 key 必须可比较；自定义 Comparator 要能接受所有键，并尽量与 equals 一致。</p>
+                    <p>如果只要求哈希查找，不要为了“看起来有序”使用 TreeMap；如果需要排行榜区间、时间窗口索引或最邻近键，TreeMap 的排序能力才有价值。</p>
+                </section>
+
+                <section id="queue-deque">
+                    <h2>6. Queue、Deque 与 PriorityQueue</h2>
+                    <h3 id="queue-api">6.1 两组队列 API</h3>
+                    <div class="comparison-table-wrap">
+                        <table class="comparison-table">
+                            <thead><tr><th>操作</th><th>失败抛异常</th><th>失败返回特殊值</th></tr></thead>
+                            <tbody>
+                                <tr><td>插入</td><td><code>add(e)</code></td><td><code>offer(e)</code></td></tr>
+                                <tr><td>删除队首</td><td><code>remove()</code></td><td><code>poll()</code></td></tr>
+                                <tr><td>查看队首</td><td><code>element()</code></td><td><code>peek()</code></td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <p>容量受限或并发队列通常优先使用 <code>offer</code>一组 API，调用方可以显式处理“当前无法插入”。BlockingQueue 还提供可阻塞的 <code>put/take</code>和带超时操作。</p>
+
+                    <h3 id="array-deque">6.2 ArrayDeque：队列和栈的常用选择</h3>
+                    <p>ArrayDeque 使用循环数组支持两端操作，通常比 LinkedList 更节省内存、局部性更好。作为栈使用 <code>push/pop/peek</code>，作为队列使用 <code>offer/poll/peek</code>。它不允许 null，因此 null 可以安全表示“没有元素”。</p>
+
+                    <figure class="tech-figure">
+                        <svg viewBox="0 0 780 250" role="img" aria-labelledby="deque-title deque-desc">
+                            <title id="deque-title">ArrayDeque 循环数组示意</title>
+                            <desc id="deque-desc">循环数组由 head 和 tail 标记首尾，两端都可以添加或删除，索引在数组边界处回绕。</desc>
+                            <text class="svg-label" x="390" y="29">逻辑上的双端队列</text>
+                            <g class="svg-card--muted"><rect x="39" y="63" width="88" height="64"/><text class="svg-small" x="83" y="99">空闲</text></g>
+                            <g class="svg-card--accent"><rect x="127" y="63" width="88" height="64"/><text x="171" y="99">A</text></g>
+                            <g class="svg-card"><rect x="215" y="63" width="88" height="64"/><text x="259" y="99">B</text></g>
+                            <g class="svg-card"><rect x="303" y="63" width="88" height="64"/><text x="347" y="99">C</text></g>
+                            <g class="svg-card--muted"><rect x="391" y="63" width="88" height="64"/><text class="svg-small" x="435" y="99">空闲</text></g>
+                            <g class="svg-card--muted"><rect x="479" y="63" width="88" height="64"/><text class="svg-small" x="523" y="99">空闲</text></g>
+                            <g class="svg-card--muted"><rect x="567" y="63" width="88" height="64"/><text class="svg-small" x="611" y="99">空闲</text></g>
+                            <g class="svg-card--muted"><rect x="655" y="63" width="88" height="64"/><text class="svg-small" x="699" y="99">回绕</text></g>
+                            <path class="svg-line" d="M171 46 V63"/><polygon class="svg-arrow-fill" points="171,63 165,53 177,53"/><text class="svg-label" x="171" y="41">head</text>
+                            <path class="svg-line" d="M435 127 V151"/><polygon class="svg-arrow-fill" points="435,127 429,137 441,137"/><text class="svg-label" x="435" y="169">tail</text>
+                            <path class="svg-line svg-line--dashed" d="M699 145 C699 210 83 210 83 145"/><polygon class="svg-arrow-fill" points="83,145 77,155 89,155"/>
+                            <text class="svg-label" x="390" y="220">数组末端后继续从索引 0 使用空间</text>
+                        </svg>
+                        <figcaption>概念图：实际 head/tail 定义及扩容方式属于具体 JDK 实现。</figcaption>
+                    </figure>
+
+                    <h3 id="priority-queue">6.3 PriorityQueue：堆顶有序，不是整体有序</h3>
+                    <p>PriorityQueue 通常使用二叉堆。<code>peek</code>查看优先级最高元素是 O(1)，<code>offer/poll</code>通常是 O(log n)。它的迭代顺序不保证排序；要按优先级依次取得元素，必须持续 <code>poll</code>或复制后排序。</p>
+                    <div class="code-block" data-language="java">
+                        <pre><code>import java.util.Comparator;
+import java.util.PriorityQueue;
+import java.util.Queue;
+
+public final class TaskQueueDemo {
+    record Task(String name, int priority) {}
+
+    public static void main(String[] args) {
+        Queue&lt;Task&gt; tasks = new PriorityQueue&lt;&gt;(
+                Comparator.comparingInt(Task::priority).reversed());
+
+        tasks.offer(new Task("report", 2));
+        tasks.offer(new Task("payment", 10));
+        tasks.offer(new Task("email", 1));
+
+        while (!tasks.isEmpty()) {
+            System.out.println(tasks.poll()); // payment, report, email
+        }
+    }
+}</code></pre>
+                    </div>
+                </section>
+
+                <section id="concurrent-collections">
+                    <h2>7. 并发集合：线程安全不等于所有组合操作原子</h2>
+                    <p>普通 ArrayList、HashMap 和 HashSet 都不是线程安全的。多线程共享且存在写操作时，要么把状态封装在锁内，要么选择并发集合。上一篇<a href="/blog/java-locks.html#engineering-selection">《Java 锁机制》工程选型</a>讨论了 JVM 本地锁边界；这里聚焦集合自身提供的并发语义。</p>
+
+                    <h3 id="synchronized-wrapper">7.1 synchronized 包装器</h3>
+                    <p><code>Collections.synchronizedList</code>等包装器让单个方法通过同一互斥锁串行执行，但遍历仍需要手动同步整个迭代过程。多个方法组成的“先检查再执行”也不会自动成为一个原子事务。</p>
+                    <div class="code-block" data-language="java">
+                        <pre><code>import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+
+public final class SynchronizedViewDemo {
+    private final List&lt;String&gt; names =
+            Collections.synchronizedList(new ArrayList&lt;&gt;());
+
+    public void printAll() {
+        synchronized (names) {
+            for (String name : names) {
+                System.out.println(name);
+            }
+        }
+    }
+}</code></pre>
+                    </div>
+
+                    <h3 id="concurrent-hash-map">7.2 ConcurrentHashMap</h3>
+                    <p>ConcurrentHashMap 支持高并发读取和更新，读取通常不需要锁住整张表。JDK 8+ 的实现不再采用早期 Segment 分段锁结构，而是在桶级结合 CAS、<code>synchronized</code>、链表 / 红黑树和协作扩容等机制。它不允许 null key 或 null value，避免并发语境下“没有映射”和“映射为 null”的歧义。</p>
+                    <p>线程安全的方法应优先使用原子复合 API，例如 <code>putIfAbsent</code>、<code>compute</code>、<code>merge</code>。自己写 <code>containsKey</code>后再<code>put</code>仍存在检查与写入之间的竞态。</p>
+                    <div class="code-block" data-language="java">
+                        <pre><code>import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.LongAdder;
+
+public final class WordCounter {
+    private final Map&lt;String, LongAdder&gt; counts = new ConcurrentHashMap&lt;&gt;();
+
+    public void record(String word) {
+        counts.computeIfAbsent(word, ignored -&gt; new LongAdder()).increment();
+    }
+
+    public long count(String word) {
+        LongAdder counter = counts.get(word);
+        return counter == null ? 0L : counter.sum();
+    }
+}</code></pre>
+                    </div>
+                    <p>映射函数应尽量短、无阻塞且避免递归修改同一映射。迭代器是弱一致的：可以与更新并发，不抛出普通 fail-fast 异常，但遍历结果可能反映部分更新，不是时间点快照。</p>
+
+                    <h3 id="concurrent-options">7.3 CopyOnWrite 与跳表</h3>
+                    <ul>
+                        <li><strong>CopyOnWriteArrayList：</strong>写时复制，迭代器是创建时快照；适合读极多写极少的监听器、配置快照。</li>
+                        <li><strong>ConcurrentLinkedQueue：</strong>非阻塞并发队列，适合不需要容量限制和阻塞等待的任务流。</li>
+                        <li><strong>BlockingQueue：</strong>生产者—消费者、背压和线程池工作队列；有界队列通常更容易控制资源。</li>
+                        <li><strong>ConcurrentSkipListMap：</strong>并发有序 Map，支持范围查询，典型复杂度 O(log n)。</li>
+                    </ul>
+                </section>
+
+                <section id="views-and-immutability">
+                    <h2>8. 视图、不可修改与不可变集合</h2>
+                    <h3 id="factory-methods">8.1 List.of 与 copyOf</h3>
+                    <p><code>List.of</code>、<code>Set.of</code>、<code>Map.of</code>创建不可修改集合，并拒绝 null；Set 和 Map 工厂也拒绝重复元素 / key。<code>List.copyOf(source)</code>得到源集合当前内容的不可修改副本语义，后续修改 source 不应影响结果。</p>
+
+                    <h3 id="unmodifiable-view">8.2 unmodifiable 只是只读视图</h3>
+                    <p><code>Collections.unmodifiableList(source)</code>禁止通过视图写入，但 source 仍可被其他代码修改，视图会反映变化。它不是防御性副本，更不自动获得线程安全。</p>
+
+                    <h3 id="array-and-sublist-views">8.3 Arrays.asList 与 subList</h3>
+                    <div class="code-block" data-language="java">
+                        <pre><code>import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
+
+public final class ViewDemo {
+    public static void main(String[] args) {
+        String[] array = {"A", "B"};
+        List&lt;String&gt; fixed = Arrays.asList(array);
+        fixed.set(0, "X");          // 允许替换，array[0] 同时变为 X
+        // fixed.add("C");          // UnsupportedOperationException：长度固定
+
+        List&lt;String&gt; source = new ArrayList&lt;&gt;(List.of("A", "B"));
+        List&lt;String&gt; view = Collections.unmodifiableList(source);
+        source.add("C");            // view 现在也能看到 C
+
+        List&lt;String&gt; snapshot = List.copyOf(source);
+        source.add("D");            // snapshot 不受影响
+    }
+}</code></pre>
+                    </div>
+                    <p><code>subList</code>也是原列表的区间视图，不是新 ArrayList。对子列表的结构修改会写回原列表；原列表被视图之外的路径结构性修改后继续使用旧 subList，行为可能失败。跨层传递数据时，明确创建 <code>new ArrayList&lt;&gt;(subList)</code>通常更安全。</p>
+                </section>
+
+                <section id="selection">
+                    <h2>9. 实际开发如何选择集合</h2>
+                    <h3 id="complexity-table">9.1 常用操作复杂度</h3>
+                    <div class="comparison-table-wrap">
+                        <table class="comparison-table">
+                            <thead><tr><th>实现</th><th>读取 / 查找</th><th>插入 / 删除</th><th>顺序</th><th>典型用途</th></tr></thead>
+                            <tbody>
+                                <tr><td>ArrayList</td><td>索引 O(1)，contains O(n)</td><td>尾加摊销 O(1)，中间 O(n)</td><td>索引 / 插入顺序</td><td>普通有序数据、批量遍历</td></tr>
+                                <tr><td>HashSet</td><td>平均 O(1)</td><td>平均 O(1)</td><td>不保证</td><td>去重、成员判断</td></tr>
+                                <tr><td>TreeSet</td><td>O(log n)</td><td>O(log n)</td><td>排序</td><td>有序去重、范围查询</td></tr>
+                                <tr><td>HashMap</td><td>平均 O(1)</td><td>平均 O(1)</td><td>不保证</td><td>按键索引、聚合</td></tr>
+                                <tr><td>LinkedHashMap</td><td>平均 O(1)</td><td>平均 O(1)</td><td>插入或访问顺序</td><td>有序映射、简单 LRU</td></tr>
+                                <tr><td>TreeMap</td><td>O(log n)</td><td>O(log n)</td><td>键排序</td><td>范围、导航、最近键</td></tr>
+                                <tr><td>ArrayDeque</td><td>查看两端 O(1)</td><td>两端摊销 O(1)</td><td>队列顺序</td><td>栈、队列、滑动窗口</td></tr>
+                                <tr><td>PriorityQueue</td><td>peek O(1)</td><td>offer / poll O(log n)</td><td>只保证堆顶</td><td>Top K、调度、最短路径</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <p>表格描述典型复杂度，不代表实际延迟。对象分配、缓存局部性、哈希质量、数据规模和并发竞争都会改变结果。</p>
+
+                    <h3 id="selection-scenarios">9.2 后端开发常见场景</h3>
+                    <div class="scenario-list">
+                        <article><span>01</span><div><h3>数据库查询结果</h3><p>通常顺序遍历，优先 ArrayList；能预估行数时设置容量。</p></div></article>
+                        <article><span>02</span><div><h3>按 ID 快速定位</h3><p>使用 HashMap；key 尽量不可变，并实现稳定 equals/hashCode。</p></div></article>
+                        <article><span>03</span><div><h3>保持输入顺序去重</h3><p>使用 LinkedHashSet，而不是 HashSet 后猜测迭代顺序。</p></div></article>
+                        <article><span>04</span><div><h3>排行榜和范围查询</h3><p>单 JVM 可评估 TreeMap；真实大规模排行榜通常需要数据库或专用存储。</p></div></article>
+                        <article><span>05</span><div><h3>生产者—消费者</h3><p>优先有界 BlockingQueue，通过容量形成背压，避免无界积压耗尽堆。</p></div></article>
+                        <article><span>06</span><div><h3>并发注册表与计数</h3><p>ConcurrentHashMap 配合 compute、merge 或 LongAdder，避免检查—再执行竞态。</p></div></article>
+                    </div>
+
+                    <figure class="tech-figure">
+                        <svg viewBox="0 0 780 315" role="img" aria-labelledby="selection-title selection-desc">
+                            <title id="selection-title">Java 集合选型流程</title>
+                            <desc id="selection-desc">根据按键、唯一性、排序、首尾操作和并发需求选择 Map、Set、List、Deque 或并发集合。</desc>
+                            <g class="svg-card--accent"><rect x="300" y="20" width="180" height="52" rx="7"/><text x="390" y="51">数据如何被访问？</text></g>
+                            <path class="svg-line" d="M390 72 V104"/>
+                            <g class="svg-card"><rect x="28" y="105" width="164" height="58" rx="7"/><text x="110" y="130">按 key 查找</text><text class="svg-small" x="110" y="148">Map</text></g>
+                            <g class="svg-card"><rect x="215" y="105" width="164" height="58" rx="7"/><text x="297" y="130">只关心唯一性</text><text class="svg-small" x="297" y="148">Set</text></g>
+                            <g class="svg-card"><rect x="402" y="105" width="164" height="58" rx="7"/><text x="484" y="130">按位置 / 顺序</text><text class="svg-small" x="484" y="148">List</text></g>
+                            <g class="svg-card"><rect x="589" y="105" width="164" height="58" rx="7"/><text x="671" y="130">首尾 / 优先级</text><text class="svg-small" x="671" y="148">Deque / Queue</text></g>
+                            <path class="svg-line" d="M110 163 V208"/><path class="svg-line" d="M297 163 V208"/><path class="svg-line" d="M484 163 V208"/><path class="svg-line" d="M671 163 V208"/>
+                            <g class="svg-card--muted"><rect x="28" y="209" width="164" height="66" rx="7"/><text x="110" y="234">Hash / Linked / Tree</text><text class="svg-small" x="110" y="254">顺序与范围决定实现</text></g>
+                            <g class="svg-card--muted"><rect x="215" y="209" width="164" height="66" rx="7"/><text x="297" y="234">Hash / Linked / Tree</text><text class="svg-small" x="297" y="254">去重顺序与排序</text></g>
+                            <g class="svg-card--muted"><rect x="402" y="209" width="164" height="66" rx="7"/><text x="484" y="234">优先 ArrayList</text><text class="svg-small" x="484" y="254">特殊读写再换实现</text></g>
+                            <g class="svg-card--muted"><rect x="589" y="209" width="164" height="66" rx="7"/><text x="671" y="234">ArrayDeque / Priority</text><text class="svg-small" x="671" y="254">阻塞则 BlockingQueue</text></g>
+                            <text class="svg-label" x="390" y="302">存在共享写？再判断锁封装、并发集合、快照或消息队列</text>
+                        </svg>
+                        <figcaption>先根据语义选择接口，再根据顺序、复杂度、内存和并发选择实现。</figcaption>
+                    </figure>
+
+                    <h3 id="common-pitfalls">9.3 高频错误清单</h3>
+                    <ul>
+                        <li>依赖 HashMap / HashSet 当前观察到的迭代顺序。</li>
+                        <li>把 LinkedList 的中间插入笼统说成 O(1)，忽略定位节点的 O(n)。</li>
+                        <li>HashMap key 可变，或 equals 与 hashCode 不一致。</li>
+                        <li>认为 ConcurrentHashMap 能让多次调用自动组成事务。</li>
+                        <li>在并发修改中依赖 ConcurrentModificationException 保证正确性。</li>
+                        <li>误以为 Arrays.asList 是普通 ArrayList，或把 unmodifiable 视图当作不可变副本。</li>
+                        <li>使用无界集合承接不受控流量，最终把队列积压演变成堆 OOM。</li>
+                    </ul>
+                </section>
+
+                <section id="interview">
+                    <h2>10. Java 集合高频面试问题</h2>
+                    <p class="section-intro">每题先给可直接口述的回答，再补充追问需要的边界。</p>
+                    <div class="qa-list">
+                        <details open><summary><span>01</span>Collection 和 Collections 有什么区别？</summary><div><p><strong>面试回答：</strong>Collection 是 List、Set、Queue 等集合接口的根接口；Collections 是工具类，提供排序、查找、同步包装和不可修改视图等静态方法。Map 不继承 Collection。</p><p><strong>原理补充：</strong>Map 通过 keySet、values、entrySet 提供集合视图。</p></div></details>
+                        <details><summary><span>02</span>ArrayList 和 LinkedList 有什么区别？</summary><div><p><strong>面试回答：</strong>ArrayList 基于可扩容数组，随机访问 O(1)、中间移动 O(n)，内存局部性好；LinkedList 是双向链表，按索引访问 O(n)，节点开销较大，只有已经定位节点后的链接操作才是 O(1)。</p><p><strong>原理补充：</strong>大多数普通 List 场景优先 ArrayList；双端队列优先 ArrayDeque。</p></div></details>
+                        <details><summary><span>03</span>ArrayList 扩容机制是什么？</summary><div><p><strong>面试回答：</strong>容量不足时创建更大的数组并复制旧元素，尾部追加因此是摊销 O(1)。当前 OpenJDK 常按约 1.5 倍增长，但具体倍率不是 List API 契约。</p><p><strong>原理补充：</strong>预估数据量时指定初始容量或 ensureCapacity 能减少复制和临时数组。</p></div></details>
+                        <details><summary><span>04</span>为什么 ArrayList 查询快、插入慢？</summary><div><p><strong>面试回答：</strong>按索引可直接计算数组偏移，所以 get 是 O(1)；中间插入要把后续引用整体右移，所以是 O(n)。</p><p><strong>原理补充：</strong>尾部插入通常不移动现有元素，只在扩容时复制。</p></div></details>
+                        <details><summary><span>05</span>HashMap 的底层结构是什么？</summary><div><p><strong>面试回答：</strong>JDK 8+ OpenJDK HashMap 使用桶数组，桶内通常是链表，严重冲突且容量足够时可转为红黑树。通过 hash 定位桶，再用 hash 与 equals 匹配 key。</p><p><strong>原理补充：</strong>这是实现细节；树化常见阈值 8、最小容量 64，但不能由业务依赖。</p></div></details>
+                        <details><summary><span>06</span>HashMap 为什么容量通常是 2 的幂？</summary><div><p><strong>面试回答：</strong>当前实现可用位运算快速计算桶索引，扩容翻倍时节点只需根据新增高位留在原索引或移动固定偏移，也有利于均匀利用哈希位。</p><p><strong>原理补充：</strong>构造时给出的容量会被实现调整，不代表底层表立刻分配到该大小。</p></div></details>
+                        <details><summary><span>07</span>HashMap 的负载因子为什么常是 0.75？</summary><div><p><strong>面试回答：</strong>它是在桶数组空间和冲突概率之间的经验折中。更低会占更多空间但冲突少，更高节省桶空间但链表或树冲突增加。</p><p><strong>原理补充：</strong>不要脱离数据规模和哈希质量随意修改。</p></div></details>
+                        <details><summary><span>08</span>HashMap 为什么线程不安全？</summary><div><p><strong>面试回答：</strong>put、resize、链表或树维护都涉及多步共享状态更新，没有并发同步；并发写可能丢更新、覆盖状态或得到不一致结果。</p><p><strong>原理补充：</strong>不要只背早期 JDK 的“扩容死循环”，现代实现问题表现可能不同，结论仍是不能并发共享写。</p></div></details>
+                        <details><summary><span>09</span>HashMap 和 Hashtable 有什么区别？</summary><div><p><strong>面试回答：</strong>HashMap 非线程安全，允许 null key/value；Hashtable 是旧式同步容器，不允许 null，方法级同步并不适合现代高并发组合操作。新代码通常用 HashMap 或 ConcurrentHashMap。</p><p><strong>原理补充：</strong>ConcurrentHashMap 不是简单给整张表加一把锁。</p></div></details>
+                        <details><summary><span>10</span>HashMap 和 ConcurrentHashMap 有什么区别？</summary><div><p><strong>面试回答：</strong>HashMap 用于非并发或外部同步场景；ConcurrentHashMap 提供线程安全的单操作和 compute、merge 等原子复合 API，高并发读取通常不锁整表，并禁止 null key/value。</p><p><strong>原理补充：</strong>JDK 8+ 实现结合 CAS 和桶级同步，不是 JDK 7 的 Segment 架构。</p></div></details>
+                        <details><summary><span>11</span>ConcurrentHashMap 的 size 准确吗？</summary><div><p><strong>面试回答：</strong>在没有并发更新时有明确结果；并发更新期间，聚合状态可能是瞬时估计，更适合监控而不是流程控制。</p><p><strong>原理补充：</strong>并发逻辑不要依赖“先 size 再操作”维持不变式。</p></div></details>
+                        <details><summary><span>12</span>equals 和 hashCode 为什么必须一起重写？</summary><div><p><strong>面试回答：</strong>哈希集合先用 hash 定位桶，再用 equals 判断逻辑相等。equals 相等却 hash 不同会落入不同桶，导致查找失败或重复。</p><p><strong>原理补充：</strong>相同 hash 不要求 equals 相等，冲突由桶内比较解决。</p></div></details>
+                        <details><summary><span>13</span>HashSet 如何实现去重？</summary><div><p><strong>面试回答：</strong>HashSet 通常使用 HashMap，把元素作为 key、内部常量对象作为 value，因此由 hashCode 和 equals 决定唯一性。</p><p><strong>原理补充：</strong>LinkedHashSet 增加顺序链，TreeSet 使用排序比较结果判重。</p></div></details>
+                        <details><summary><span>14</span>TreeMap 和 HashMap 如何选择？</summary><div><p><strong>面试回答：</strong>只需按键平均 O(1) 查找用 HashMap；需要键排序、范围查询、floor/ceiling 等导航操作用 TreeMap，复杂度通常 O(log n)。</p><p><strong>原理补充：</strong>TreeMap Comparator 应稳定并尽量与 equals 一致。</p></div></details>
+                        <details><summary><span>15</span>什么是 fail-fast？</summary><div><p><strong>面试回答：</strong>普通集合迭代器检测到预期之外的结构修改时会尽快抛 ConcurrentModificationException，用于暴露错误。</p><p><strong>原理补充：</strong>这是 best-effort 检测，不保证每次抛出，也不提供线程安全。</p></div></details>
+                        <details><summary><span>16</span>CopyOnWriteArrayList 适合什么场景？</summary><div><p><strong>面试回答：</strong>适合读远多于写、集合不大、遍历需要稳定快照的场景，例如监听器列表。每次写都会复制数组，写频繁时成本很高。</p><p><strong>原理补充：</strong>迭代器看不到创建后的修改，也不支持 iterator.remove。</p></div></details>
+                        <details><summary><span>17</span>ArrayDeque 为什么通常比 Stack 更推荐？</summary><div><p><strong>面试回答：</strong>Stack 继承 Vector，是旧式同步设计；ArrayDeque 直接提供 Deque 的栈和队列语义，通常开销更低、API 更清晰。</p><p><strong>原理补充：</strong>ArrayDeque 不允许 null，也不是线程安全的。</p></div></details>
+                        <details><summary><span>18</span>PriorityQueue 是完全有序的吗？</summary><div><p><strong>面试回答：</strong>不是。它只保证队首是当前优先级最高或最低元素，迭代顺序不保证排序；按顺序消费要持续 poll。</p><p><strong>原理补充：</strong>常见实现是二叉堆，peek O(1)，offer/poll O(log n)。</p></div></details>
+                        <details><summary><span>19</span>Arrays.asList、List.of、new ArrayList 有什么区别？</summary><div><p><strong>面试回答：</strong>Arrays.asList 是数组支持的定长视图，可 set 但不能增删；List.of 是不可修改且拒绝 null 的集合；new ArrayList 创建可变独立列表。</p><p><strong>原理补充：</strong>需要从数组得到普通可变列表，可用 new ArrayList&lt;&gt;(Arrays.asList(array))。</p></div></details>
+                        <details><summary><span>20</span>如何选择合适的 Java 集合？</summary><div><p><strong>面试回答：</strong>先判断按位置、按 key、唯一性还是队列语义，再判断是否需要顺序、排序、范围查询和并发；最后结合数据规模、复杂度和内存成本选择实现。</p><p><strong>原理补充：</strong>普通 List 优先 ArrayList，哈希索引用 HashMap/HashSet，排序用 Tree 系列，双端操作用 ArrayDeque，并发共享写选择原子复合 API或锁封装。</p></div></details>
+                    </div>
+                </section>
+
+                <section id="closing">
+                    <h2>结语：集合选型先看语义，再看实现</h2>
+                    <p>Java 集合不是类名记忆题。List、Set、Map 和 Queue 先表达数据关系；数组、链表、哈希表、红黑树、堆和跳表再决定复杂度与空间代价；同步、快照或无锁算法最后决定并发语义。</p>
+                    <p>面试时给出结论后，要主动补上条件：平均还是最坏复杂度、接口契约还是 OpenJDK 实现、单线程还是并发、视图还是副本。实际开发中也按同样方式思考，通常就能避开“用错集合导致慢、乱序、丢数据或 OOM”的问题。</p>
+
+                    <h3 id="official-references">官方资料与版本参考</h3>
+                    <ul>
+                        <li><a href="https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/util/Collection.html" target="_blank" rel="noreferrer">Java SE 25 Collection API</a>：集合根接口、顺序与 fail-fast 边界。</li>
+                        <li><a href="https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/util/HashMap.html" target="_blank" rel="noreferrer">Java SE 25 HashMap API</a>：容量、负载因子、复杂度和线程安全说明。</li>
+                        <li><a href="https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/util/concurrent/ConcurrentHashMap.html" target="_blank" rel="noreferrer">Java SE 25 ConcurrentHashMap API</a>：并发读取、null 限制与批量操作。</li>
+                        <li><a href="https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/util/SequencedCollection.html" target="_blank" rel="noreferrer">SequencedCollection API</a>：JDK 21+ 首尾操作与反向视图。</li>
+                        <li><a href="https://github.com/openjdk/jdk/blob/master/src/java.base/share/classes/java/util/HashMap.java" target="_blank" rel="noreferrer">OpenJDK HashMap 源码</a>：树化阈值等当前实现细节。</li>
+                    </ul>
+                </section>
+            </article>
+
+            <footer class="article-footer">
+                <div>
+                    <strong>上一篇</strong>
+                    <a href="/blog/jvm-memory-management.html">深入理解 JVM 内存管理</a>
+                </div>
+                <a href="/blog/index.html">返回博客列表 <span aria-hidden="true">→</span></a>
+            </footer>
+        </main>
+
+        <aside class="article-aside" aria-label="文章摘要">
+            <div class="aside-card">
+                <span class="aside-label">本文主线</span>
+                <p>接口与契约</p><i>↓</i>
+                <p>底层数据结构</p><i>↓</i>
+                <p>并发与视图</p><i>↓</i>
+                <p>选型与面试</p>
+            </div>
+            <div class="aside-card aside-card--tags">
+                <span class="aside-label">标签</span>
+                <div><span>Java</span><span>Collections</span><span>List</span><span>Map</span><span>Set</span><span>JUC</span></div>
+            </div>
+        </aside>
+    </div>
+
+    <button class="back-to-top" type="button" aria-label="返回顶部" title="返回顶部">↑</button>
+</body>
+</html>
