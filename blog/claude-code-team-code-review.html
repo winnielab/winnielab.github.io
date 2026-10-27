@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="auto">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="整理翻译 Claude Code 团队的代码审查方法：分层自动化、风险分级、人类审批、评估体系与快速回滚。">
+    <meta name="theme-color" content="#7fc5d5">
+    <title>Claude Code 团队如何做代码审查 · Young</title>
+    <link rel="stylesheet" href="blog.css?v=20261027">
+    <script src="blog.js?v=20261015-2" defer></script>
+</head>
+<body>
+    <div class="reading-progress" aria-hidden="true"><span></span></div>
+
+    <header class="site-header">
+        <a class="brand" href="/index.html">Young</a>
+        <nav aria-label="博客导航">
+            <a href="/index.html#about">Home</a>
+            <a href="/index.html#projects">Projects</a>
+            <a href="/blog/index.html" aria-current="page">Blog</a>
+        </nav>
+        <button class="theme-toggle" type="button" aria-label="切换深色模式" title="切换深色模式">
+            <span class="theme-icon" aria-hidden="true">◐</span>
+        </button>
+    </header>
+
+    <div class="article-shell">
+        <aside class="toc-panel" aria-label="文章目录">
+            <a class="toc-back" href="/blog/index.html"><span aria-hidden="true">←</span> 博客首页</a>
+            <p class="toc-title">目录</p>
+            <nav id="toc"></nav>
+        </aside>
+
+        <main class="article-main">
+            <article>
+                <header class="article-header">
+                    <div class="article-kicker">AI 工程 / 代码审查</div>
+                    <h1>Claude Code 团队如何做代码审查：<br><span>用分层自动化换取人类注意力</span></h1>
+                    <p class="article-lead">当代理生成的代码让变更量成倍增长，逐行人工审查不再可扩展。Claude Code 团队的答案不是取消审查，而是把验证前移、让自动化承担大部分阅读，再依据风险把真正需要判断与担责的部分交给人。</p>
+                    <div class="article-meta" aria-label="文章信息">
+                        <span>发布于 2026-10-27</span>
+                        <span>约 18 分钟阅读</span>
+                        <span class="article-tag-links"><a href="/blog/index.html#ai-engineering">AI 工程</a> · <a href="/blog/index.html#ai-engineering">代码审查</a> · <a href="/blog/index.html#ai-engineering">工程效能</a></span>
+                    </div>
+                </header>
+
+                <div class="article-note article-note--scope">
+                    <strong>译编说明</strong>
+                    <p>本文根据 Addy Osmani 发布的英文长文整理翻译，保留主要论点、关键数据与实施清单，并按中文技术文章的阅读习惯重组结构；它不是逐句直译，也不是 Anthropic 或 Claude Code 的官方中文版本。完整来源与声明见文末。</p>
+                </div>
+
+                <figure class="tech-figure tech-figure--media tech-figure--cover">
+                    <img src="/blog/assets/claude-code-review-cover.jpg" alt="How the Claude Code team does Code Review 英文封面">
+                    <figcaption>原文封面：Claude Code 团队如何进行代码审查。图片来自原文。</figcaption>
+                </figure>
+
+                <section id="rethinking-review">
+                    <h2>1. 重新定义代码审查：不是“谁读过”，而是“什么会出错”</h2>
+                    <p>Claude 曾被披露承担 Claude Code 约 90% 的代码编写工作。随之而来的问题很直接：代码产出速度上升后，谁还能逐行读完所有变更？如果代码出错，又该由什么机制兜底？</p>
+                    <p>原文给出了一组很有代表性的结果：从 6 月到 9 月，Claude Code 代码库合并的拉取请求数量增长到两倍以上，而需要回滚的拉取请求占比反而下降了 40% 以上。团队并没有停止代码审查，而是自动化了大部分“阅读”，同时显著增强了验证与回滚能力。</p>
+
+                    <div class="concept-grid">
+                        <div class="concept-card">
+                            <span class="concept-index">01</span>
+                            <h4>审查前移</h4>
+                            <p>代理在 PR 创建前运行测试、构建与界面验证，并让一个拥有全新上下文的子代理先检查差异。</p>
+                        </div>
+                        <div class="concept-card">
+                            <span class="concept-index">02</span>
+                            <h4>层层过滤</h4>
+                            <p>AI 审查、安全审查、CI、人类审批和合并队列分别捕获不同类型的问题。</p>
+                        </div>
+                        <div class="concept-card">
+                            <span class="concept-index">03</span>
+                            <h4>快速恢复</h4>
+                            <p>功能开关、分阶段发布与一键回滚承认“漏网之鱼一定存在”，并限制其影响范围。</p>
+                        </div>
+                    </div>
+
+                    <p>传统审查经常把“有人读过代码”当成完成标准。Claude Code 团队换了一个问题：<strong>这个变更可能在哪里出错，最合适的自动化或人工检查是什么？</strong>这也改变了审查的时机——它不再是代码写完后的单一闸门，而更像写作时持续运行的拼写检查。</p>
+                    <p>代码审查仍承担两个目标：一是上线前发现并修复缺陷，二是帮助团队建立对代码库的共同理解。原文主要讨论第一个目标，但后文也回应了“机器读完大部分代码后，人如何继续学习系统”的问题。</p>
+                </section>
+
+                <section id="human-time">
+                    <h2>2. 真正要优化的是人类时间，而不只是审批次数</h2>
+                    <p>人类时间有两面成本：一面是花在审查上的时间，另一面是糟糕代码进入系统后花在修复上的时间。如果只是减少前者，却让事故和回滚增加，就不是节省，只是把成本挪到了更晚、更昂贵的位置。</p>
+                    <p>团队的目标是：Claude Code 的 CLI、桌面端、Web 端和移动端仓库中，大多数拉取请求最多只需要一名人类参与——这名人也可以是作者本人——同时不提高回滚率或事故率。</p>
+
+                    <div class="comparison-table-wrap">
+                        <table class="comparison-table">
+                            <thead><tr><th>指标类型</th><th>具体指标</th><th>作用</th></tr></thead>
+                            <tbody>
+                                <tr><td>人力投入</td><td>每个 PR 的人类审批中位数与 P95</td><td>观察常态与长尾成本</td></tr>
+                                <tr><td>协作摩擦</td><td>人类评论数、等待人工处理的时间</td><td>定位流程中的排队与往返</td></tr>
+                                <tr><td>质量护栏</td><td>回滚率、事故率</td><td>防止“减少审查”只是把成本后移</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <div class="article-note">
+                        <strong>规模背景</strong>
+                        <p>Anthropic 的单体仓库在同年 5 月约有 2,500 个变更每天合入，到 9 月已超过 30,000 个。Claude Code 本身不在这个单体仓库中，但承受着类似的速度压力。这样的吞吐量下，逐行、同步、纯人工的审查方式很难继续扩展。</p>
+                    </div>
+                </section>
+
+                <section id="change-journey">
+                    <h2>3. 一次变更的旅程：多层防线，而不是一道闸门</h2>
+                    <p>一个典型变更会从工程师电脑或 Slack 中的 Claude 会话出发，依次经过提交前验证、PR 级审查、合并与发布。大部分流程自动完成，人类注意力只集中到高风险决策上。</p>
+
+                    <figure class="tech-figure tech-figure--media">
+                        <img src="/blog/assets/claude-code-review-lifecycle.jpg" alt="一次 Claude Code 变更从提交前验证到上线后回滚的生命周期">
+                        <figcaption>图 A：一次变更的生命周期。自动化覆盖大部分步骤，风险分级决定何时必须由人作出判断。</figcaption>
+                    </figure>
+
+                    <figure class="tech-figure tech-figure--media">
+                        <img src="/blog/assets/claude-code-review-layers.jpg" alt="验证、CI、AI 审查、安全审查、人类审批与合并队列组成的多层检查">
+                        <figcaption>图 B：不是单点闸门，而是多层防线；每一层都可能漏掉问题，但同一个问题穿透所有层的概率更低。</figcaption>
+                    </figure>
+
+                    <h3 id="pre-pr">第一层：PR 创建前就完成验证</h3>
+                    <p>团队要求代理交付<strong>可验证的结果</strong>，而不只是说“任务完成了”。验证可以是测试、构建、lint，也可以是在浏览器或手机模拟器中运行界面，并把结果展示出来。随后再由一个拥有全新上下文的子代理审查差异。</p>
+                    <p>许多工程师还会运行内部技能来寻找缺陷、缩减无关 diff、做端到端验证，或根据设计规范检查 UI。Boris Cherny 估计，为代理配备明确的验证流程，能让输出质量提升约 2～3 倍。</p>
+                    <p>重复出现的问题不应只在每个 PR 里反复提醒，而要回到源头修复：更新技能、增加 lint 规则，或改进项目文档。原文特别提到两个文件：</p>
+                    <ul>
+                        <li><strong>CLAUDE.md：</strong>简要描述技术栈、约定、目标与非目标，为每次审查提供稳定上下文；大型代码库只保留入口信息，再链接到详细文档。</li>
+                        <li><strong>REVIEW.md：</strong>由代码所有者说明本模块真正重要的审查点，例如如何定义失败、哪些路径忽略、如何减少无意义挑错，以及发现必须附带文件与行号。</li>
+                    </ul>
+
+                    <h3 id="ai-review">第二层：每个 PR 都经过 AI 审查</h3>
+                    <p>每个拉取请求都会先由 Claude 对照整个代码库和作者陈述的意图进行审查：变更是否真的解决问题、是否与更大系统契合、是否破坏其他部分；遇到缺陷修复时，审查器还会尝试追到根因。</p>
+                    <p>从研究预览发布到原文写作时，收到实质性审查意见的内部 PR 占比从 16% 上升到 54%。超过 1,000 行的 PR 中，多数能检出问题；较小的 PR 则多数返回无问题。仓库管理员还可以按场景选择 Quick、Standard 或 Deep 模式。</p>
+                    <p>在意见展示给人之前，多名代理并行找缺陷，另一组代理对结论投票，过滤掉误报和纯样式、诊断或清理类意见。剩余发现会按严重程度排序，并标注为 Important、Nit 或 Pre-existing。所有发现都必须被修复，或由作者给出理由后关闭线程。</p>
+
+                    <h3 id="security-ci">第三、四层：可阻塞的安全审查与 CI</h3>
+                    <p>安全审查是独立的一道自动化检查。只要代码审查或安全审查仍有未处理发现，PR 就不能合并；后续提交修复问题时，相应发现可以自动关闭。</p>
+                    <p>常规 CI 则覆盖 lint、类型检查、多平台测试、构建与打包。一个 CLI PR 在任何人打开前就可能运行数十项检查。PR 模板要求说明“如何测试”“风险是什么”“如何回滚”；Claude 可以代为填写，但作者仍要负责核对。</p>
+
+                    <h3 id="risk-approval">第五层：按变更风险决定人类审批强度</h3>
+                    <p>审批等级由<strong>变更本身</strong>决定，而不是由作者名气决定。分类器根据代码差异判断风险，另一个分类器还会确认某个具体变更是否需要额外审批。敏感路径与 CI 工作流始终需要人类参与。</p>
+
+                    <figure class="tech-figure tech-figure--media">
+                        <img src="/blog/assets/claude-code-review-risk.jpg" alt="低、中、高风险变更对应零、一、两名人类审批者">
+                        <figcaption>图 C：低风险变更在自动检查通过后可无需额外人类批准；中风险通常需要一人；最高风险与少数敏感路径需要两人。</figcaption>
+                    </figure>
+
+                    <p>宽松路径只开放给仓库的可信作者，通常就是负责该仓库的团队。代理的批准不能充当人类批准。作者要对变更负责：如果 PR 由代理编写，代理的操作者仍计为责任人。审批只对当前提交有效；代理推送新提交，或有人手工解决冲突后，原审批会失效并要求重新确认。</p>
+
+                    <h3 id="merge-rollback">第六层与最后防线：合并队列、渐进发布和快速回滚</h3>
+                    <p>合并队列会把变更应用到最新的 <code>main</code> 后重新运行检查，防止两个各自通过测试的 PR 合并后一起破坏主干。新功能通常先放在功能开关后，只对 Anthropic 员工开放；公开发布时先进入 latest 渠道，stable 渠道延后。</p>
+                    <p>坏变更仍可能穿透所有检查，因此最后一层是快速反馈与恢复：关闭功能开关无需重新部署；值班轮换、内部高频使用、遥测和回滚仪表盘负责尽快暴露回归。事故复盘关注“哪一层原本应该捕获它”，而不是只追问谁提交了代码。</p>
+                </section>
+
+                <section id="reviewer-improvement">
+                    <h2>4. 让审查器持续变好：用真实事故做评测</h2>
+                    <p>团队把曾导致事故的 PR、修复提交与回滚收集起来，由熟悉代码库的工程师确认缺陷位置和结论，再让审查系统每天在这组案例上运行。每次修改审查提示、工具或模型，都要重新跑完整集合，只有分数改善才保留。</p>
+
+                    <figure class="tech-figure tech-figure--media">
+                        <img src="/blog/assets/claude-code-review-eval.jpg" alt="从事故与回滚构建评测集并每日验证审查器改动的循环">
+                        <figcaption>图 D：事故就是评测集。每次真实失败都会沉淀为新案例，审查器的每次变化也都必须接受回归测试。</figcaption>
+                    </figure>
+
+                    <p>只追求“发现更多问题”会制造大量误报，因此噪声也要测量。团队观察人类如何处理每条评论：修复、拒绝、说明这是有意设计，还是认为它无关紧要；同时在已知干净的 PR 上运行审查，检查系统是否提出反而会伤害代码的修改。</p>
+
+                    <h3 id="convergence">审查必须收敛</h3>
+                    <p>代理作者与代理审查者可能陷入无限往返。团队曾发现一个 CLI 项目的 PR 在一夜之间循环了 50 多次。追溯审查器反复指出的代码后发现，约 59% 从第一次审查起就已经存在——系统并非不断发现新引入的缺陷，而是在每一轮多找出几个历史问题。</p>
+                    <p>他们据此调整复审策略：限制轮数，三轮后要求作者重新评估方案；初始几轮之后只检查新的差异；一次性说明问题类别，让作者成批修正；避免重复报告已经出现过的意见。同时，审查代理会在夜间扫描当前代码库，把历史问题提前从 PR 流程中分离出去。</p>
+
+                    <figure class="tech-figure tech-figure--media">
+                        <img src="/blog/assets/claude-code-review-convergence.jpg" alt="改进收敛策略前后的审查轮数对比">
+                        <figcaption>图 E：收敛改造后，一轮审查加修复即通过的比例从 65% 升到 78%；需要五轮以上的比例从 8.9% 降到 1.5%；平均通过轮数从 2.08 降到 1.32。</figcaption>
+                    </figure>
+                </section>
+
+                <section id="humans-in-loop">
+                    <h2>5. 人类仍然不可替代，但要把注意力用在正确的地方</h2>
+                    <p>让资深工程师为常见错误停下手头工作，成本远高于把这种检查自动化。人类审查者仍然负责机器难以代替的事情：</p>
+                    <ul>
+                        <li><strong>决定是否值得做：</strong>设定产品愿景、审美、目标与边界，而不只是检查实现是否自洽。</li>
+                        <li><strong>审计危险代码：</strong>认证、计费、自动更新、CI、发布流程和安装器等高影响区域。</li>
+                        <li><strong>审查架构：</strong>架构选择会成为后来者遵循的约定，影响远超当前 diff。</li>
+                        <li><strong>验证证据：</strong>检查测试输出、运行命令、截图和审查结论，而不是只点一个赞。</li>
+                        <li><strong>承担责任：</strong>无论代码由谁敲出，每个上线变更都必须有一个人对其结果负责。</li>
+                    </ul>
+
+                    <h3 id="team-context">如果机器负责阅读，人如何理解代码库？</h3>
+                    <p>代码审查长期以来也是传播上下文的渠道。Claude Code 团队没有要求任何人把整个代码库装进脑中；当成员需要理解某个局部时，会让 Claude 针对那一小块生成最新的讲解，一些人还会进一步生成可交互的小型可视化。</p>
+
+                    <figure class="tech-figure tech-figure--media">
+                        <img src="/blog/assets/claude-code-review-context.jpg" alt="针对即将修改的代码切片生成讲解与可视化来学习代码库">
+                        <figcaption>图 F：逐行阅读琐碎 diff 学到的东西很少；针对即将修改的模块生成讲解，更能集中建立相关心智模型。</figcaption>
+                    </figure>
+
+                    <p>这不是否认共享知识的重要性，而是改变获取知识的单位：从“读完每个 diff”改成“在需要时理解准确的系统切片”。团队也默认在开放 Slack 频道中工作，让其他人能看到正在进行的设计和实现，并随时加入讨论。</p>
+                </section>
+
+                <section id="ownership">
+                    <h2>6. “你合入，你负责”与尽早转向</h2>
+                    <p>如果一个小型或中型变更出问题，通常由合并它的人修复，因为这个人掌握最多上下文。这个机制之所以不会演变成追责游戏，依赖几个前提：变更足够小、易于审查和回滚；功能开关与分阶段发布能在几分钟内缩小影响；高风险代码要求更高验证标准；遥测和内部使用能快速暴露回归；事故复盘关注系统而非归咎个人。</p>
+                    <p>代理让“开始写一份新实现”变得便宜，因此放弃错误方案也应该同样自然。有人在讨论中指出方向不对时，作者可以直接关闭 PR 或修改方案，而不必因为已经生成了大量代码就产生沉没成本。关键是尽早在讨论中转向，不要等到实现定型后才留下阻塞性意见。</p>
+                </section>
+
+                <section id="implementation">
+                    <h2>7. 如何把这套方法落到自己的团队</h2>
+                    <p>原文给出的实施路径可以整理为四组清单。重点不是一次性复制整套系统，而是先建立验证与质量护栏，再用数据逐步放宽低风险路径。</p>
+
+                    <div class="scenario-list">
+                        <article>
+                            <span>01</span>
+                            <div><h3>提交 PR 之前</h3><p>在简短的 <code>CLAUDE.md</code> 中列出代理可执行的检查；通过 hooks 调用格式化与 lint；用全新上下文审查变更；用 <code>REVIEW.md</code> 记录反复出现的问题。</p></div>
+                        </article>
+                        <article>
+                            <span>02</span>
+                            <div><h3>每个 PR 上</h3><p>强制 CI；在模板中加入 Testing、Risk 与 How to revert；接入 AI 与安全审查；要求所有审查线程在合并前解决。</p></div>
+                        </article>
+                        <article>
+                            <span>03</span>
+                            <div><h3>审批阶段</h3><p>按变更而非作者定义风险；从严格规则开始，再用证据逐步放宽；机器人批准不计入必需的人类批准；新提交到达后撤销旧批准。</p></div>
+                        </article>
+                        <article>
+                            <span>04</span>
+                            <div><h3>合并与上线后</h3><p>使用合并队列、功能开关、内部先行和分阶段发布；提供一步回滚；持续记录事故与回滚，审查器变化后重跑评测。</p></div>
+                        </article>
+                    </div>
+
+                    <div class="article-note article-note--warning">
+                        <strong>两个容易漏掉的约束</strong>
+                        <p>第一，审查强度要与影响半径匹配：日常改动可以快，认证、计费、CI 与发布路径必须保留人类把关。第二，复审轮次必须有上限，否则代理作者与代理审查者可能在低价值意见上无限循环。</p>
+                    </div>
+                </section>
+
+                <section id="conclusion">
+                    <h2>8. 结语：从“人读每一行”转向“系统覆盖每种风险”</h2>
+                    <p>Claude Code 团队的方法并不等于“让 AI 自己批准自己”。它把代码审查拆成多个各有所长的环节：代理在编写时验证，多个审查器在 PR 上找缺陷，安全审查与 CI 阻塞明确风险，人类按影响半径介入，合并队列与分阶段发布降低上线风险，最后再用遥测与回滚承认任何系统都不可能百分之百拦截错误。</p>
+                    <p>这套实践真正优化的是<strong>每次变更所需的人类努力</strong>，质量底线则由回滚率和事故率守住。每当审查器漏掉问题，团队就追问缺少了什么上下文，并把答案写入 <code>CLAUDE.md</code>、技能或新的自动检查。审查不再是一场一次性的阅读仪式，而是一个能从失败中学习、持续演化的工程系统。</p>
+                </section>
+
+                <section id="references">
+                    <h2>参考链接与声明</h2>
+                    <ol class="reference-list">
+                        <li><a href="https://x.com/addyosmani/article/2114604912520921136" target="_blank" rel="noopener noreferrer">Addy Osmani：How the Claude Code team does code review（本文主要来源）</a></li>
+                        <li><a href="https://claude.dev/blog/solving-code-review-at-anthropic/" target="_blank" rel="noopener noreferrer">Solving code review at Anthropic（原文注明的早期文章）</a></li>
+                        <li><a href="https://code.claude.com/docs/en/best-practices" target="_blank" rel="noopener noreferrer">Claude Code Docs：Best Practices</a></li>
+                        <li><a href="https://code.claude.com/docs/en/code-review" target="_blank" rel="noopener noreferrer">Claude Code Docs：Code Review</a></li>
+                        <li><a href="https://www.anthropic.com/engineering/redesigning-source-control" target="_blank" rel="noopener noreferrer">Anthropic Engineering：Redesigning Source Control</a></li>
+                        <li><a href="https://x.com/bcherny/status/2007179861115511237" target="_blank" rel="noopener noreferrer">Boris Cherny 关于验证流程的说明</a></li>
+                    </ol>
+
+                    <div class="article-note source-disclosure">
+                        <strong>声明</strong>
+                        <p>本文为学习与技术交流目的所作的非官方中文译编。为提升中文可读性，正文对原文顺序、标题和部分表达进行了重组与概括，并非逐字翻译；原文观点、数据与配图的相关权利归原作者及相应权利人所有。如本文与原文存在差异，请以英文原文为准。本文与 Anthropic、Claude Code 或原作者不存在官方授权或隶属关系。</p>
+                    </div>
+                </section>
+            </article>
+
+            <footer class="article-footer">
+                <div>
+                    <strong>继续阅读</strong>
+                    <a href="/blog/java-collections.html">深入理解 Java 集合框架</a>
+                </div>
+                <a href="/blog/index.html">返回博客列表 <span aria-hidden="true">→</span></a>
+            </footer>
+        </main>
+
+        <aside class="article-aside" aria-label="文章摘要">
+            <div class="aside-card">
+                <span class="aside-label">本文主线</span>
+                <p>审查目标重构</p>
+                <i>↓</i>
+                <p>六层质量防线</p>
+                <i>↓</i>
+                <p>评测与收敛</p>
+                <i>↓</i>
+                <p>风险化落地</p>
+            </div>
+            <div class="aside-card aside-card--tags">
+                <span class="aside-label">标签</span>
+                <div>
+                    <a href="/blog/index.html#ai-engineering">AI 工程</a>
+                    <a href="/blog/index.html#ai-engineering">Claude Code</a>
+                    <a href="/blog/index.html#ai-engineering">代码审查</a>
+                    <a href="/blog/index.html#ai-engineering">工程效能</a>
+                    <a href="/blog/index.html#ai-engineering">CI/CD</a>
+                </div>
+            </div>
+        </aside>
+    </div>
+
+    <button class="back-to-top" type="button" aria-label="返回顶部" title="返回顶部">↑</button>
+</body>
+</html>

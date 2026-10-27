@@ -3,10 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="Young 的技术博客，记录 Java 后端、并发编程与工程实践。">
+    <meta name="description" content="Young 的技术博客，记录 Java 后端、AI 辅助开发与工程实践。">
     <meta name="theme-color" content="#7fc5d5">
     <title>Blog · Young</title>
-    <link rel="stylesheet" href="blog.css?v=20261015">
+    <link rel="stylesheet" href="blog.css?v=20261027">
     <script src="blog-index.js" defer></script>
 </head>
 <body class="blog-index-page">
@@ -29,10 +29,10 @@
             <div>
                 <p class="blog-index-kicker">Notes on software engineering</p>
                 <h1>Blog</h1>
-                <p class="blog-index-lead">记录 Java 后端、并发编程与工程实践。文章强调原理、代码与真实场景之间的联系，方便系统学习，也适合作为面试复习索引。</p>
+                <p class="blog-index-lead">记录 Java 后端、AI 辅助开发与工程实践。文章强调原理、代码与真实场景之间的联系，方便系统学习，也适合作为工程决策索引。</p>
             </div>
             <div class="blog-index-stat" aria-label="博客统计">
-                <strong>03</strong>
+                <strong>04</strong>
                 <span>篇文章</span>
             </div>
         </header>
@@ -40,8 +40,9 @@
         <div class="blog-browser">
             <aside class="blog-categories" aria-label="文章分类">
                 <p class="aside-label">分类</p>
-                <a href="#articles" aria-current="page"><span>全部文章</span><b>3</b></a>
+                <a href="#articles" aria-current="page"><span>全部文章</span><b>4</b></a>
                 <a href="#articles"><span>Java</span><b>3</b></a>
+                <a href="#ai-engineering"><span>AI 工程</span><b>1</b></a>
                 <a href="#collections"><span>集合框架</span><b>1</b></a>
                 <a href="#jvm"><span>JVM</span><b>1</b></a>
                 <a href="#concurrency"><span>并发编程</span><b>1</b></a>
@@ -55,6 +56,25 @@
                     </div>
                     <span>按发布时间排序</span>
                 </div>
+
+                <a class="post-card" id="ai-engineering" href="/blog/claude-code-team-code-review.html" aria-label="阅读《Claude Code 团队如何做代码审查：用分层自动化换取人类注意力》">
+                    <div class="post-card__content">
+                        <div class="post-card__eyebrow">AI 工程 / 代码审查</div>
+                        <h3>Claude Code 团队如何做代码审查：用分层自动化换取人类注意力</h3>
+                        <p>整理翻译 Claude Code 团队的代码审查方法：验证前移、分层防线、风险分级、评测收敛与快速回滚。</p>
+                        <div class="post-card__tags" aria-label="文章标签">
+                            <span>AI 工程</span>
+                            <span>Claude Code</span>
+                            <span>代码审查</span>
+                            <span>工程效能</span>
+                        </div>
+                    </div>
+                    <div class="post-card__meta">
+                        <time datetime="2026-10-27">2026-10-27</time>
+                        <span>约 18 分钟</span>
+                        <i aria-hidden="true">→</i>
+                    </div>
+                </a>
 
                 <a class="post-card" id="collections" href="/blog/java-collections.html" aria-label="阅读《深入理解 Java 集合框架：从底层数据结构到面试实战》">
                     <div class="post-card__content">

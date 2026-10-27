@@ -342,6 +342,11 @@ td code {
     content: "/";
 }
 
+.article-tag-links a {
+    color: var(--sidebar-deep);
+    font-weight: 700;
+}
+
 .article-main section {
     margin-top: 74px;
 }
@@ -397,6 +402,22 @@ td code {
 .article-main li {
     margin: 8px 0;
     padding-left: 4px;
+}
+
+.reference-list a {
+    color: var(--sidebar-deep);
+    font-weight: 650;
+    overflow-wrap: anywhere;
+}
+
+.reference-list a::after {
+    margin-left: 0.28em;
+    font-size: 0.78em;
+    content: "↗";
+}
+
+.source-disclosure {
+    margin-top: 30px;
 }
 
 .article-note {
@@ -588,6 +609,21 @@ td code {
     display: block;
     width: 100%;
     height: auto;
+}
+
+.tech-figure--media {
+    padding: 12px;
+}
+
+.tech-figure--media img {
+    display: block;
+    width: 100%;
+    height: auto;
+    border-radius: 3px;
+}
+
+.tech-figure--cover {
+    margin-top: 34px;
 }
 
 .tech-figure figcaption {
@@ -795,12 +831,19 @@ td code {
     gap: 6px;
 }
 
-.aside-card--tags span:not(.aside-label) {
+.aside-card--tags span:not(.aside-label),
+.aside-card--tags a {
     padding: 3px 7px;
     border: 1px solid var(--line);
     border-radius: 3px;
     color: var(--muted);
     font-size: 0.68rem;
+}
+
+.aside-card--tags a:hover {
+    border-color: var(--sidebar-deep);
+    color: var(--sidebar-deep);
+    text-decoration: none;
 }
 
 .back-to-top {
